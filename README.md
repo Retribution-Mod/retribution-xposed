@@ -11,7 +11,7 @@
     >
   </picture>
   <br>
-   <a href="https://discord.com/invite/ddcQf3s2Uq">
+   <a href="https://discord.gg/7CWcwZZGWr">
        <picture>
            <source height="32px" media="(prefers-color-scheme: dark)" srcset="https://user-images.githubusercontent.com/13122796/178032563-d4e084b7-244e-4358-af50-26bde6dd4996.png" />
            <img height="32px" src="https://user-images.githubusercontent.com/13122796/178032563-d4e084b7-244e-4358-af50-26bde6dd4996.png" />
@@ -28,7 +28,7 @@
 
 # RetributionXposed
 
-**Discord, your way.** RetributionXposed is an Xposed module that loads [Retribution](https://github.com/Retribution-Mod/retribution-bundle-next) into Discord Android.
+**Discord, your way.** RetributionXposed is an Xposed module that loads the [Retribution bundle](https://github.com/Retribution-Mod/Retribution) into Discord on Android.
 
 RetributionXposed is the root installation method for Retribution. It bootstraps the Retribution bundle inside Discord's process, manages the plugin system, and bridges JavaScript with the Android platform.
 
@@ -52,7 +52,14 @@ Grab the latest module APK from the [Releases](https://github.com/Retribution-Mo
 2. Enable the module for Discord in your Xposed manager.
 3. Restart Discord, and you should be running Retribution!
 
-## 👷 Development
+## � Add-ons
+
+- **Plugins**: https://plugins-list.pages.dev or the [Plugin List plugin](https://purple-eyez.github.io/Plugins-List_Plugin/plugins-list/)
+- **Themes**: available in the Plugin List
+- **Fonts**: https://bunny-google-fonts.vercel.app/
+- **iOS install**: https://github.com/Retribution-Mod/retribution-tweak/releases/latest
+
+## �👷 Development
 
 You'll need a JDK (25 recommended) and the Android SDK. Once you have those, follow these steps:
 
