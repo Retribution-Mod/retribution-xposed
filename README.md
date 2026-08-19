@@ -28,7 +28,7 @@
 
 # RetributionXposed
 
-**Discord, your way.** RetributionXposed is an Xposed module that loads the [Retribution bundle](https://github.com/Retribution-Mod/Retribution) into Discord on Android.
+**Discord, your way.** RetributionXposed is an Xposed module that loads the [Retribution bundle](https://github.com/Retribution-Mod/retribution-bundle) into Discord on Android.
 
 RetributionXposed is the root installation method for Retribution. It bootstraps the Retribution bundle inside Discord's process, manages the plugin system, and bridges JavaScript with the Android platform.
 
