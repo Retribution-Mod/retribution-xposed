@@ -2,11 +2,14 @@ package io.github.retribution.xposed.tweaks
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import io.github.retribution.logger
 import io.github.retribution.reloadApp
 import io.github.retribution.xposed.RetributionConstants
 import io.github.retribution.xposed.RetributionJson
+import io.github.retribution.xposed.tweaks.legacy.appearance.Theme
+import io.github.retribution.xposed.tweaks.legacy.appearance.ThemeData
 import io.github.retribution.xposed.httpClient
 import io.github.retribution.xposed.tweak
 import io.github.retribution.xposed.tweaks.base.withAppActivity
@@ -20,30 +23,27 @@ import kotlinx.serialization.Serializable
 import java.io.File
 
 /**
- * Handles retribution:// deep links by writing the appropriate config files
- * and restarting Discord so the XPosed tweaks / bundle handle them on next launch.
+ * Handles manager://, retribution://, plugin://, theme:// and font:// deep links
+ * by writing the appropriate config files and restarting Discord so the bundle
+ * or XPosed tweaks can apply them on next launch.
  */
 val bundleDeepLinkTweak by tweak {
     withAppActivity { activity ->
         val intent = activity.intent
         val data = intent?.data
-        val url = when {
-            data?.host == "bundle" || data?.host == "font" -> data.getQueryParameter("url")
-            intent?.hasExtra("retribution_bundle_url") == true ->
-                intent.getStringExtra("retribution_bundle_url")
-            else -> null
-        }
+        val type = deepLinkType(data)
+        val url = resolveInstallUrl(data) ?: intent?.getStringExtra("retribution_bundle_url")
 
-        if (url == null) return@withAppActivity
+        if (type == null || url == null) return@withAppActivity
 
-        when (data?.host ?: "bundle") {
+        when (type) {
             "bundle" -> {
                 RetributionUpdater.applyBundleUrl(url)
                 reloadApp()
             }
-            "font" -> {
-                installFontFromUrl(activity, url)
-            }
+            "font" -> installFontFromUrl(activity, url)
+            "theme" -> installThemeFromUrl(activity, url)
+            "plugin" -> installPluginFromUrl(activity, type, url)
         }
     }
 }
@@ -55,6 +55,104 @@ data class FontManifest(
     val spec: Int? = null,
     val main: Map<String, String>
 )
+
+private fun deepLinkType(data: Uri?): String? {
+    return when (data?.scheme) {
+        "bundle", "manager" -> data.host?.takeIf { it == "bundle" }?.let { "bundle" }
+        "font" -> "font"
+        "theme" -> "theme"
+        "plugin" -> "plugin"
+        "retribution" -> data.host?.takeIf { it in setOf("bundle", "font", "theme", "plugin") }
+        else -> null
+    }
+}
+
+private fun resolveInstallUrl(data: Uri?): String? {
+    data ?: return null
+
+    data.getQueryParameter("url")?.let { return it }
+
+    val host = data.host ?: return null
+    val path = data.path?.trim('/') ?: return null
+    if (path.isBlank()) return null
+
+    val base = if ("." in host) "https://$host" else "https://$host.github.io"
+    val query = data.query?.let { "?$it" } ?: ""
+
+    return when (data.scheme) {
+        "plugin" -> "$base/$path/"
+        "theme" -> {
+            val suffix = if (path.endsWith(".json")) "" else ".json"
+            "$base/$path$suffix"
+        }
+        "font" -> "$base/$path$query"
+        "retribution" -> when (data.host) {
+            "bundle", "font", "theme", "plugin" -> "$base/$path$query".let {
+                when (data.host) {
+                    "plugin" -> "$it/"
+                    "theme" -> if (path.endsWith(".json")) it else "$it.json"
+                    else -> it
+                }
+            }
+            else -> null
+        }
+        else -> null
+    }
+}
+
+private fun installPluginFromUrl(activity: Activity, type: String, url: String) {
+    val log = logger("BundleDeepLinkTweak")
+    val filesDir = File(activity.applicationContext.dataDir, RetributionConstants.FILES_DIR).apply { mkdirs() }
+
+    // Stage the deeplink for the bundle. The bundle reads this on launch and can trigger
+    // its own plugin installer, which is the correct place to parse Vendetta manifests.
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val deeplinkFile = File(filesDir, "deeplink.json")
+            deeplinkFile.writeText(
+                RetributionJson.encodeToString(
+                    DeepLinkPayload(type = type, url = url)
+                )
+            )
+            log.i("Plugin deep link staged: $url")
+            reloadApp()
+        } catch (e: Throwable) {
+            log.e("Failed to stage plugin deep link", e)
+        }
+    }
+}
+
+@Serializable
+private data class DeepLinkPayload(
+    val type: String,
+    val url: String,
+)
+
+private fun installThemeFromUrl(activity: Activity, url: String) {
+    val log = logger("BundleDeepLinkTweak")
+    val filesDir = File(activity.applicationContext.dataDir, RetributionConstants.FILES_DIR).apply { mkdirs() }
+
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val response = httpClient.get(url)
+            if (!response.status.isSuccess()) throw Error("HTTP ${response.status}")
+
+            val data = response.body<String>()
+            val themeData = RetributionJson.decodeFromString<ThemeData>(data)
+            val theme = Theme(
+                id = themeData.name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim { it == '-' },
+                selected = true,
+                data = themeData,
+            )
+
+            File(filesDir, "current-theme.json").writeText(RetributionJson.encodeToString(theme))
+            log.i("Theme installed: ${themeData.name}")
+            reloadApp()
+        } catch (e: Throwable) {
+            log.e("Failed to install theme from $url", e)
+        }
+    }
+}
 
 private fun installFontFromUrl(activity: Activity, url: String) {
     val log = logger("BundleDeepLinkTweak")
