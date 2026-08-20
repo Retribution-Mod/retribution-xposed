@@ -64,3 +64,10 @@ dependencies {
 
     testImplementation(libs.kotlin.test)
 }
+
+configurations.configureEach {
+    if (name == "compileClasspath" || name == "runtimeClasspath"
+            || name.endsWith("CompileClasspath") || name.endsWith("RuntimeClasspath")) {
+        resolutionStrategy.activateDependencyLocking()
+    }
+}

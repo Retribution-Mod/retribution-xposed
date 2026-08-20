@@ -1,0 +1,13 @@
+# This is a Gradle generated file for dependency locking.
+# Manual edits can break the build and are not advised.
+# This file is expected to be part of source control.
+# To regenerate this file, run: ./gradlew :api:dependencies --write-locks
+de.robv.android.xposed:api:82=debugCompileClasspath,releaseCompileClasspath
+org.jetbrains.kotlin:kotlin-stdlib:2.4.10=debugAndroidTestCompileClasspath,debugAndroidTestRuntimeClasspath,debugCompileClasspath,debugRuntimeClasspath,debugUnitTestCompileClasspath,debugUnitTestRuntimeClasspath,releaseCompileClasspath,releaseRuntimeClasspath
+org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0=debugCompileClasspath,releaseCompileClasspath
+org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.11.0=debugCompileClasspath,releaseCompileClasspath
+org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0=debugCompileClasspath,releaseCompileClasspath
+org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0=debugCompileClasspath,releaseCompileClasspath
+org.jetbrains:annotations:13.0=debugAndroidTestCompileClasspath,debugAndroidTestRuntimeClasspath,debugRuntimeClasspath,debugUnitTestCompileClasspath,debugUnitTestRuntimeClasspath,releaseRuntimeClasspath
+org.jetbrains:annotations:23.0.0=debugCompileClasspath,releaseCompileClasspath
+empty=
