@@ -14,6 +14,9 @@ internal val RESERVED_DEPENDENCY_IDS: Set<String> = setOf(API_DEPENDENCY_ID, DIS
 /** The version of the host Discord app. */
 internal lateinit var DISCORD_VERSION: Version
 
+/** Safe check for whether [DISCORD_VERSION] has been set by the version retriever. */
+internal fun isDiscordVersionSet(): Boolean = ::DISCORD_VERSION.isInitialized
+
 /**
  * Provider plugin representing Retribution's API, providing the Retribution module's class loader
  * that external native plugins link against. It also tracks the API version so an update automatically re-verifies every plugin's compatibility range.

@@ -11,6 +11,7 @@ import io.github.retribution.plugins.Version
 import io.github.retribution.xposed.*
 import io.github.retribution.xposed.tweaks.base.withAppActivity
 import io.github.retribution.xposed.tweaks.plugins.internal.DISCORD_VERSION
+import io.github.retribution.xposed.tweaks.plugins.internal.isDiscordVersionSet
 import io.github.retribution.xposed.tweaks.plugins.internal.showRecoveryAlert
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
@@ -114,7 +115,7 @@ object RetributionUpdater {
     fun downloadScript(userInitiated: Boolean = false, showDialog: Boolean = true): Job = scope.launch {
         try {
             val version = withTimeoutOrNull(2.seconds) {
-                while (!::DISCORD_VERSION.isInitialized) delay(50)
+                while (!isDiscordVersionSet()) delay(50)
                 DISCORD_VERSION
             }
             val url = config.customLoadUrl.takeIf { it.enabled }?.url ?: bundleUrl(version)
