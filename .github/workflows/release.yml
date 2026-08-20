@@ -103,8 +103,10 @@ jobs:
       - name: Create Tag and Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_CODE: ${{ github.event.inputs.versionCode }}
+          VERSION_NAME: ${{ github.event.inputs.versionName }}
         run: |
-          tag=${{ github.event.inputs.versionCode }}
+          tag=$VERSION_CODE
           if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
             echo "Tag $tag already exists, skipping creation."
           else
@@ -112,6 +114,6 @@ jobs:
             git push origin "$tag"
           fi
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
-            --title "${{ github.event.inputs.versionName }}" \
+            --title "$VERSION_NAME" \
             --generate-notes \
             dist/app-debug.apk dist/app-release.apk
