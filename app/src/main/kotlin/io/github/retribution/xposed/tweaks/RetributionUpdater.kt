@@ -78,8 +78,24 @@ object RetributionUpdater {
         configFile = File(filesDir, CONFIG_PATH)
 
         config = runCatching {
-            if (configFile.exists()) RetributionJson.decodeFromString<LoaderConfig>(configFile.readText())
-            else LoaderConfig()
+            if (configFile.exists()) {
+                val loadedConfig = RetributionJson.decodeFromString<LoaderConfig>(configFile.readText())
+                // Security: Validate custom URL on load to prevent use of persisted malicious URLs
+                if (loadedConfig.customLoadUrl.enabled) {
+                    val customUrl = loadedConfig.customLoadUrl.url
+                    if (!isValidBundleUrl(customUrl)) {
+                        log.w("Loaded config contains invalid custom URL, resetting: $customUrl")
+                        configFile.delete()
+                        LoaderConfig()
+                    } else {
+                        loadedConfig
+                    }
+                } else {
+                    loadedConfig
+                }
+            } else {
+                LoaderConfig()
+            }
         }.getOrDefault(LoaderConfig())
     }
 
@@ -113,6 +129,13 @@ object RetributionUpdater {
     }
 
     fun applyBundleUrl(url: String) {
+        // Security: Validate URL before persisting
+        if (!isValidBundleUrl(url)) {
+            log.e("Rejected invalid bundle URL: $url")
+            throw SecurityException("Bundle URL validation failed: URL must be from a trusted source")
+        }
+        
+        log.i("Applying custom bundle URL: $url")
         val newConfig = LoaderConfig(customLoadUrl = CustomLoadUrl(enabled = true, url = url))
         if (::configFile.isInitialized) {
             config = newConfig
@@ -120,6 +143,22 @@ object RetributionUpdater {
         } else {
             config = newConfig
         }
+    }
+    
+    /**
+     * Validates that a bundle URL is from a trusted source.
+     * This provides defense-in-depth against malicious bundle URLs.
+     */
+    private fun isValidBundleUrl(url: String): Boolean {
+        // Allow official Retribution bundle URLs from GitHub
+        val allowedPrefixes = listOf(
+            "https://github.com/Retribution-Mod/retribution-bundle/releases/",
+            "https://github.com/Retribution-Mod/retribution-bundle-next/releases/",
+            "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle/",
+            "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle-next/"
+        )
+        
+        return allowedPrefixes.any { url.startsWith(it, ignoreCase = true) }
     }
 
     /**
