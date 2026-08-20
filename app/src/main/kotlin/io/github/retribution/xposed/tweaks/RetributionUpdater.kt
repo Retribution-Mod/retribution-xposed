@@ -7,8 +7,10 @@ import androidx.core.util.writeBytes
 import io.github.retribution.logger
 import io.github.retribution.reloadApp
 import io.github.retribution.xposed.RetributionJson
+import io.github.retribution.plugins.Version
 import io.github.retribution.xposed.*
 import io.github.retribution.xposed.tweaks.base.withAppActivity
+import io.github.retribution.xposed.tweaks.plugins.internal.DISCORD_VERSION
 import io.github.retribution.xposed.tweaks.plugins.internal.showRecoveryAlert
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
@@ -37,8 +39,9 @@ object RetributionUpdater {
     private val TIMEOUT_CACHED = 5.seconds
     private const val ETAG_PATH = "etag.txt"
     private const val CONFIG_PATH = "loader.json"
-    private const val DEFAULT_BUNDLE_URL =
-        "https://github.com/Retribution-Mod/retribution-bundle/releases/latest/download/retribution.min.js"
+    private const val BASE_BUNDLE_URL =
+        "https://github.com/Retribution-Mod/retribution-bundle/releases/latest/download"
+    private val NEW_VERSION_THRESHOLD = Version.parse("341.0.0")
 
     private val log = logger("RetributionUpdater")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -75,6 +78,15 @@ object RetributionUpdater {
         if (::configFile.isInitialized && configFile.exists()) configFile.delete()
     }
 
+    /**
+     * Picks the classic bundle variant based on the detected Discord version.
+     * Versions >= 341.0.0 use the new (RN 0.86+) bundle.
+     */
+    private fun bundleUrl(version: Version?): String {
+        val variant = if (version != null && version >= NEW_VERSION_THRESHOLD) "retribution-new.min.js" else "retribution-old.min.js"
+        return "$BASE_BUNDLE_URL/$variant"
+    }
+
     fun applyBundleUrl(url: String) {
         val newConfig = LoaderConfig(customLoadUrl = CustomLoadUrl(enabled = true, url = url))
         if (::configFile.isInitialized) {
@@ -91,7 +103,11 @@ object RetributionUpdater {
      */
     fun downloadScript(userInitiated: Boolean = false, showDialog: Boolean = true): Job = scope.launch {
         try {
-            val url = config.customLoadUrl.takeIf { it.enabled }?.url ?: DEFAULT_BUNDLE_URL
+            val version = withTimeoutOrNull(2.seconds) {
+                while (!::DISCORD_VERSION.isInitialized) delay(50)
+                DISCORD_VERSION
+            }
+            val url = config.customLoadUrl.takeIf { it.enabled }?.url ?: bundleUrl(version)
             log.i("Fetching JS bundle from: $url")
 
             val result = httpClient.getWithETag(
