@@ -41,9 +41,7 @@ val bundleDeepLinkTweak by tweak {
                 RetributionUpdater.applyBundleUrl(url)
                 reloadApp()
             }
-            "font" -> installFontFromUrl(activity, url)
-            "theme" -> installThemeFromUrl(activity, url)
-            "plugin" -> installPluginFromUrl(activity, type, url)
+            "font", "theme", "plugin" -> stageDeepLink(activity, type, url)
         }
     }
 }
@@ -100,7 +98,7 @@ private fun resolveInstallUrl(data: Uri?): String? {
     }
 }
 
-private fun installPluginFromUrl(activity: Activity, type: String, url: String) {
+private fun stageDeepLink(activity: Activity, type: String, url: String) {
     val log = logger("BundleDeepLinkTweak")
     val filesDir = File(activity.applicationContext.dataDir, RetributionConstants.FILES_DIR).apply { mkdirs() }
 
@@ -114,10 +112,10 @@ private fun installPluginFromUrl(activity: Activity, type: String, url: String) 
                     DeepLinkPayload(type = type, url = url)
                 )
             )
-            log.i("Plugin deep link staged: $url")
+            log.i("$type deep link staged: $url")
             reloadApp()
         } catch (e: Throwable) {
-            log.e("Failed to stage plugin deep link", e)
+            log.e("Failed to stage $type deep link", e)
         }
     }
 }
