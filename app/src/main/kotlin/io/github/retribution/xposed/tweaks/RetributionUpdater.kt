@@ -39,6 +39,7 @@ object RetributionUpdater {
     internal val TIMEOUT = 10.seconds
     private val TIMEOUT_CACHED = 5.seconds
     private const val ETAG_PATH = "etag.txt"
+    private const val VARIANT_PATH = "variant.txt"
     private const val CONFIG_PATH = "loader.json"
     private val NEW_VERSION_THRESHOLD = Version.parse("341.0.0")
 
@@ -54,6 +55,7 @@ object RetributionUpdater {
     private var config = LoaderConfig()
     private lateinit var bundle: File
     private lateinit var etag: File
+    private lateinit var variantFile: File
     private lateinit var configFile: File
     private lateinit var packageName: String
 
@@ -72,6 +74,7 @@ object RetributionUpdater {
 
         bundle = File(cacheDir, RetributionConstants.MAIN_SCRIPT_FILE)
         etag = File(cacheDir, ETAG_PATH)
+        variantFile = File(cacheDir, VARIANT_PATH)
         configFile = File(filesDir, CONFIG_PATH)
 
         config = runCatching {
@@ -90,12 +93,23 @@ object RetributionUpdater {
      * - Versions >= 341.0.0 use the new (RN 0.86+) classic bundle.
      * - Everything else uses the old classic bundle.
      */
-    private fun bundleUrl(version: Version?): String {
-        if (::packageName.isInitialized && packageName.contains("next", ignoreCase = true)) {
-            return "$BASE_NEXT_BUNDLE_URL/retribution.min.js"
-        }
-        val variant = if (version != null && version >= NEW_VERSION_THRESHOLD) "retribution-new.min.js" else "retribution-old.min.js"
-        return "$BASE_BUNDLE_URL/$variant"
+    private fun bundleVariant(version: Version?): String = when {
+        ::packageName.isInitialized && packageName.contains("next", ignoreCase = true) -> "next"
+        version != null && version >= NEW_VERSION_THRESHOLD -> "new"
+        else -> "old"
+    }
+
+    internal fun bundleUrl(version: Version?): String = when (bundleVariant(version)) {
+        "next" -> "$BASE_NEXT_BUNDLE_URL/retribution.min.js"
+        "new" -> "$BASE_BUNDLE_URL/retribution-new.min.js"
+        else -> "$BASE_BUNDLE_URL/retribution-old.min.js"
+    }
+
+    private fun selectBundleVariant(variant: String) {
+        if (variantFile.takeIf(File::exists)?.readText() == variant) return
+        bundle.delete()
+        etag.delete()
+        variantFile.writeText(variant)
     }
 
     fun applyBundleUrl(url: String) {
@@ -118,8 +132,11 @@ object RetributionUpdater {
                 while (!isDiscordVersionSet()) delay(50)
                 DISCORD_VERSION
             }
-            val url = config.customLoadUrl.takeIf { it.enabled }?.url ?: bundleUrl(version)
-            log.i("Fetching JS bundle from: $url")
+            val customUrl = config.customLoadUrl.takeIf { it.enabled }?.url
+            val variant = customUrl?.let { "custom:$it" } ?: bundleVariant(version)
+            selectBundleVariant(variant)
+            val url = customUrl ?: bundleUrl(version)
+            log.i("Fetching $variant JS bundle from: $url")
 
             val result = httpClient.getWithETag(
                 url = url,
