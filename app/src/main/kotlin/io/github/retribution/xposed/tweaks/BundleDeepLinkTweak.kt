@@ -38,8 +38,20 @@ val bundleDeepLinkTweak by tweak {
 
         when (type) {
             "bundle" -> {
-                RetributionUpdater.applyBundleUrl(url)
-                reloadApp()
+                try {
+                    RetributionUpdater.applyBundleUrl(url)
+                    reloadApp()
+                } catch (e: SecurityException) {
+                    val log = logger("BundleDeepLinkTweak")
+                    log.e("Bundle URL validation failed", e)
+                    activity.runOnUiThread {
+                        Toast.makeText(
+                            activity,
+                            "Security Error: Bundle URL not from trusted source",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
             }
             "font", "theme", "plugin" -> stageDeepLink(activity, type, url)
         }
