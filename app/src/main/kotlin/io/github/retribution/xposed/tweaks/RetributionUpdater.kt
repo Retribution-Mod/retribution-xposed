@@ -39,9 +39,12 @@ object RetributionUpdater {
     private val TIMEOUT_CACHED = 5.seconds
     private const val ETAG_PATH = "etag.txt"
     private const val CONFIG_PATH = "loader.json"
+    private val NEW_VERSION_THRESHOLD = Version.parse("341.0.0")
+
     private const val BASE_BUNDLE_URL =
         "https://github.com/Retribution-Mod/retribution-bundle/releases/latest/download"
-    private val NEW_VERSION_THRESHOLD = Version.parse("341.0.0")
+    private const val BASE_NEXT_BUNDLE_URL =
+        "https://github.com/Retribution-Mod/retribution-bundle-next/releases/latest/download"
 
     private val log = logger("RetributionUpdater")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -51,6 +54,7 @@ object RetributionUpdater {
     private lateinit var bundle: File
     private lateinit var etag: File
     private lateinit var configFile: File
+    private lateinit var packageName: String
 
     private val _downloadReady = CompletableDeferred<Unit>()
 
@@ -60,7 +64,8 @@ object RetributionUpdater {
      */
     val downloadReady: Deferred<Unit> = _downloadReady
 
-    internal fun init(dataDir: String) {
+    internal fun init(dataDir: String, pkg: String = "") {
+        packageName = pkg
         val cacheDir = File(dataDir, RetributionConstants.CACHE_DIR).apply { mkdirs() }
         val filesDir = File(dataDir, RetributionConstants.FILES_DIR).apply { mkdirs() }
 
@@ -79,10 +84,15 @@ object RetributionUpdater {
     }
 
     /**
-     * Picks the classic bundle variant based on the detected Discord version.
-     * Versions >= 341.0.0 use the new (RN 0.86+) bundle.
+     * Picks the bundle variant:
+     * - Next package names use retribution-bundle-next.
+     * - Versions >= 341.0.0 use the new (RN 0.86+) classic bundle.
+     * - Everything else uses the old classic bundle.
      */
     private fun bundleUrl(version: Version?): String {
+        if (::packageName.isInitialized && packageName.contains("next", ignoreCase = true)) {
+            return "$BASE_NEXT_BUNDLE_URL/retribution.min.js"
+        }
         val variant = if (version != null && version >= NEW_VERSION_THRESHOLD) "retribution-new.min.js" else "retribution-old.min.js"
         return "$BASE_BUNDLE_URL/$variant"
     }
@@ -191,7 +201,7 @@ object RetributionUpdater {
  */
 val retributionUpdaterTweak by tweak {
     withAppContext { ctx ->
-        RetributionUpdater.init(ctx.dataDir.absolutePath)
+        RetributionUpdater.init(ctx.dataDir.absolutePath, ctx.packageName)
         RetributionUpdater.downloadScript(userInitiated = false, showDialog = false)
     }
 }
