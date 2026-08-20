@@ -48,6 +48,17 @@ object RetributionUpdater {
     private const val BASE_NEXT_BUNDLE_URL =
         "https://github.com/Retribution-Mod/retribution-bundle-next/releases/latest/download"
 
+    /**
+     * Allowlist of trusted bundle URL prefixes.
+     * Only URLs starting with these prefixes are permitted for custom bundle loading.
+     */
+    private val TRUSTED_BUNDLE_URL_PREFIXES = listOf(
+        "https://github.com/Retribution-Mod/retribution-bundle/releases/",
+        "https://github.com/Retribution-Mod/retribution-bundle-next/releases/",
+        "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle/",
+        "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle-next/",
+    )
+
     private val log = logger("RetributionUpdater")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -78,8 +89,24 @@ object RetributionUpdater {
         configFile = File(filesDir, CONFIG_PATH)
 
         config = runCatching {
-            if (configFile.exists()) RetributionJson.decodeFromString<LoaderConfig>(configFile.readText())
-            else LoaderConfig()
+            if (configFile.exists()) {
+                val loadedConfig = RetributionJson.decodeFromString<LoaderConfig>(configFile.readText())
+                // Validate any existing custom URL to prevent loading previously stored malicious URLs
+                if (loadedConfig.customLoadUrl.enabled) {
+                    try {
+                        validateBundleUrl(loadedConfig.customLoadUrl.url)
+                        loadedConfig
+                    } catch (e: SecurityException) {
+                        log.e("Existing custom bundle URL failed validation, resetting to default", e)
+                        configFile.delete()
+                        LoaderConfig()
+                    }
+                } else {
+                    loadedConfig
+                }
+            } else {
+                LoaderConfig()
+            }
         }.getOrDefault(LoaderConfig())
     }
 
@@ -112,7 +139,23 @@ object RetributionUpdater {
         variantFile.writeText(variant)
     }
 
+    /**
+     * Validates that a custom bundle URL is from a trusted source.
+     * @throws SecurityException if the URL is not in the allowlist
+     */
+    private fun validateBundleUrl(url: String) {
+        val isTrusted = TRUSTED_BUNDLE_URL_PREFIXES.any { prefix ->
+            url.startsWith(prefix, ignoreCase = false)
+        }
+        if (!isTrusted) {
+            throw SecurityException(
+                "Bundle URL rejected: not in allowlist. Only official Retribution bundle sources are permitted. URL: $url"
+            )
+        }
+    }
+
     fun applyBundleUrl(url: String) {
+        validateBundleUrl(url)
         val newConfig = LoaderConfig(customLoadUrl = CustomLoadUrl(enabled = true, url = url))
         if (::configFile.isInitialized) {
             config = newConfig
