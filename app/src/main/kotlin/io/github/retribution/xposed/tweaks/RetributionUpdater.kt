@@ -1,17 +1,15 @@
 package io.github.retribution.xposed.tweaks
 
 import android.app.AlertDialog
-import android.os.Handler
-import android.os.Looper
 import android.util.AtomicFile
 import android.widget.Toast
 import androidx.core.util.writeBytes
 import io.github.retribution.logger
+import io.github.retribution.reloadApp
 import io.github.retribution.xposed.RetributionJson
 import io.github.retribution.plugins.Version
 import io.github.retribution.xposed.*
 import io.github.retribution.xposed.tweaks.base.withAppActivity
-import io.github.retribution.xposed.tweaks.base.withAppContext
 import io.github.retribution.xposed.tweaks.plugins.internal.DISCORD_VERSION
 import io.github.retribution.xposed.tweaks.plugins.internal.isDiscordVersionSet
 import io.github.retribution.xposed.tweaks.plugins.internal.showRecoveryAlert
@@ -38,8 +36,8 @@ data class LoaderConfig(
  * The actual loading of the bundle is handled by [RetributionScriptLoader].
  */
 object RetributionUpdater {
-    internal val TIMEOUT = 30.seconds
-    private val TIMEOUT_CACHED = 15.seconds
+    internal val TIMEOUT = 10.seconds
+    private val TIMEOUT_CACHED = 5.seconds
     private const val ETAG_PATH = "etag.txt"
     private const val VARIANT_PATH = "variant.txt"
     private const val CONFIG_PATH = "loader.json"
@@ -60,6 +58,14 @@ object RetributionUpdater {
     private lateinit var variantFile: File
     private lateinit var configFile: File
     private lateinit var packageName: String
+
+    private val _downloadReady = CompletableDeferred<Unit>()
+
+    /**
+     * Completes after the *first* download attempt finishes (success or any terminal failure).
+     * [RetributionScriptLoader] joins on this before falling through to its fallback bundle.
+     */
+    val downloadReady: Deferred<Unit> = _downloadReady
 
     internal fun init(dataDir: String, pkg: String = "") {
         packageName = pkg
@@ -128,7 +134,7 @@ object RetributionUpdater {
             log.e("Rejected invalid bundle URL: $url")
             throw SecurityException("Bundle URL validation failed: URL must be from a trusted source")
         }
-
+        
         log.i("Applying custom bundle URL: $url")
         val newConfig = LoaderConfig(customLoadUrl = CustomLoadUrl(enabled = true, url = url))
         if (::configFile.isInitialized) {
@@ -138,7 +144,7 @@ object RetributionUpdater {
             config = newConfig
         }
     }
-
+    
     /**
      * Validates that a bundle URL is from a trusted source.
      * This provides defense-in-depth against malicious bundle URLs.
@@ -151,17 +157,15 @@ object RetributionUpdater {
             "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle/",
             "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle-next/"
         )
-
+        
         return allowedPrefixes.any { url.startsWith(it, ignoreCase = true) }
     }
 
     /**
      * Trigger a download. If [userInitiated] is true (retry from the error dialog), the timeout
      * is disabled and a success dialog is shown on the next available activity.
-     * For automatic downloads, the cached bundle is loaded immediately and a reload prompt is shown
-     * when the new bundle finishes downloading in the background.
      */
-    fun downloadScript(userInitiated: Boolean = false): Job = scope.launch {
+    fun downloadScript(userInitiated: Boolean = false, showDialog: Boolean = true): Job = scope.launch {
         try {
             val version = withTimeoutOrNull(2.seconds) {
                 while (!isDiscordVersionSet()) delay(50)
@@ -187,26 +191,40 @@ object RetributionUpdater {
                     result.etag?.let(etag::writeText) ?: etag.delete()
 
                     log.i("Bundle updated (${result.bytes.size} bytes)")
-                    if (userInitiated) showSuccessDialog() else showUpdateDialog()
+                    if (showDialog) {
+                        if (userInitiated) showSuccessDialog() else showUpdateDialog()
+                    }
                 }
 
                 ETagFetchResult.NotModified -> log.i("Server responded with 304, no changes")
             }
         } catch (e: Throwable) {
             log.e("Failed to download script", e)
-            if (userInitiated) showErrorDialog(e)
+            showErrorDialog(e)
+        } finally {
+            _downloadReady.complete(Unit)
         }
     }
 
-    private fun showUpdateDialog() = withAppContext { ctx ->
-        Handler(Looper.getMainLooper()).post {
-            Toast.makeText(ctx, "Retribution update downloaded. Restart Discord to apply.", Toast.LENGTH_LONG).show()
+    private fun showUpdateDialog() = withAppActivity { activity ->
+        activity.runOnUiThread {
+            AlertDialog.Builder(activity)
+                .setTitle("Retribution Update Downloaded")
+                .setMessage("A reload is required for changes to take effect.")
+                .setPositiveButton("Reload") { d, _ -> reloadApp(); d.dismiss() }
+                .setNegativeButton("Later") { d, _ -> d.dismiss() }
+                .show()
         }
     }
 
-    private fun showSuccessDialog() = withAppContext { ctx ->
-        Handler(Looper.getMainLooper()).post {
-            Toast.makeText(ctx, "Retribution update downloaded. Restart Discord to apply.", Toast.LENGTH_LONG).show()
+    private fun showSuccessDialog() = withAppActivity { activity ->
+        activity.runOnUiThread {
+            AlertDialog.Builder(activity)
+                .setTitle("Retribution Update Successful")
+                .setMessage("A reload is required for changes to take effect.")
+                .setPositiveButton("Reload") { d, _ -> reloadApp(); d.dismiss() }
+                .setNegativeButton("Later") { d, _ -> d.dismiss() }
+                .show()
         }
     }
 
@@ -241,6 +259,6 @@ object RetributionUpdater {
 val retributionUpdaterTweak by tweak {
     withAppContext { ctx ->
         RetributionUpdater.init(ctx.dataDir.absolutePath, ctx.packageName)
-        RetributionUpdater.downloadScript(userInitiated = false)
+        RetributionUpdater.downloadScript(userInitiated = false, showDialog = false)
     }
 }
