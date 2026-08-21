@@ -45,6 +45,9 @@ jobs:
           versionName: ${{ github.event.inputs.versionName }}
 
       - name: Commit Version Bump (if changed)
+        env:
+          VERSION_NAME: ${{ github.event.inputs.versionName }}
+          VERSION_CODE: ${{ github.event.inputs.versionCode }}
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
@@ -52,7 +55,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No version change."
           else
-            git commit -m "chore: bump version to ${{ github.event.inputs.versionName }} (${{ github.event.inputs.versionCode }})"
+            git commit -m "chore: bump version to ${VERSION_NAME} (${VERSION_CODE})"
             git push
           fi
 
