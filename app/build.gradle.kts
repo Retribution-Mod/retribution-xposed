@@ -11,8 +11,8 @@ android {
         applicationId = "io.github.retribution.xposed"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 1604
-        versionName = "1.6.4"
+        versionCode = 1605
+        versionName = "1.6.5"
     }
 
     sourceSets {
