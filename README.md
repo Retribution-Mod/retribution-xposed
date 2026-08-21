@@ -11,7 +11,7 @@
     >
   </picture>
   <br>
-   <a href="https://discord.gg/7CWcwZZGWr">
+   <a href="https://discord.gg/GNrNbGPhZv">
        <picture>
            <source height="32px" media="(prefers-color-scheme: dark)" srcset="https://user-images.githubusercontent.com/13122796/178032563-d4e084b7-244e-4358-af50-26bde6dd4996.png" />
            <img height="32px" src="https://user-images.githubusercontent.com/13122796/178032563-d4e084b7-244e-4358-af50-26bde6dd4996.png" />
