@@ -8,8 +8,6 @@ import io.github.retribution.xposed.tweaks.base.InjectorScope
 import io.github.retribution.xposed.tweaks.base.registerScriptInjector
 import io.github.retribution.xposed.tweaks.plugins.internal.DISCORD_VERSION
 import io.github.retribution.xposed.tweaks.plugins.internal.isDiscordVersionSet
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -47,14 +45,6 @@ private fun hermesBytecodeVersion(file: File): Int? {
 private fun runRetributionScripts(scope: InjectorScope, preloadsDir: File, mainScript: File) {
     val log = scope.tweakLog
     log.i("Running Retribution custom scripts...")
-
-    runBlocking {
-        try {
-            withTimeout(RetributionUpdater.TIMEOUT) { RetributionUpdater.downloadReady.await() }
-        } catch (e: Throwable) {
-            log.w("Bundle download did not complete", e)
-        }
-    }
 
     val reactDevtools = File(preloadsDir, "reactDevtools.js")
     if (isDiscordVersionSet()) {

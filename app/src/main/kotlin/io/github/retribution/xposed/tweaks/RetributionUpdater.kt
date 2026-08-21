@@ -70,14 +70,6 @@ object RetributionUpdater {
     private lateinit var configFile: File
     private lateinit var packageName: String
 
-    private val _downloadReady = CompletableDeferred<Unit>()
-
-    /**
-     * Completes after the *first* download attempt finishes (success or any terminal failure).
-     * [RetributionScriptLoader] joins on this before falling through to its fallback bundle.
-     */
-    val downloadReady: Deferred<Unit> = _downloadReady
-
     internal fun init(dataDir: String, pkg: String = "") {
         packageName = pkg
         val cacheDir = File(dataDir, RetributionConstants.CACHE_DIR).apply { mkdirs() }
@@ -168,8 +160,10 @@ object RetributionUpdater {
     /**
      * Trigger a download. If [userInitiated] is true (retry from the error dialog), the timeout
      * is disabled and a success dialog is shown on the next available activity.
+     * For automatic downloads, the cached bundle is loaded immediately and a reload prompt is shown
+     * when the new bundle finishes downloading in the background.
      */
-    fun downloadScript(userInitiated: Boolean = false, showDialog: Boolean = true): Job = scope.launch {
+    fun downloadScript(userInitiated: Boolean = false): Job = scope.launch {
         try {
             val version = withTimeoutOrNull(2.seconds) {
                 while (!isDiscordVersionSet()) delay(50)
@@ -195,28 +189,24 @@ object RetributionUpdater {
                     result.etag?.let(etag::writeText) ?: etag.delete()
 
                     log.i("Bundle updated (${result.bytes.size} bytes)")
-                    if (showDialog) {
-                        if (userInitiated) showSuccessDialog() else showUpdateDialog()
-                    }
+                    if (userInitiated) showSuccessDialog() else showUpdateDialog()
                 }
 
                 ETagFetchResult.NotModified -> log.i("Server responded with 304, no changes")
             }
         } catch (e: Throwable) {
             log.e("Failed to download script", e)
-            showErrorDialog(e)
-        } finally {
-            _downloadReady.complete(Unit)
+            if (userInitiated) showErrorDialog(e)
         }
     }
 
     private fun showUpdateDialog() = withAppActivity { activity ->
         activity.runOnUiThread {
             AlertDialog.Builder(activity)
-                .setTitle("Retribution Update Downloaded")
-                .setMessage("A reload is required for changes to take effect.")
-                .setPositiveButton("Reload") { d, _ -> reloadApp(); d.dismiss() }
-                .setNegativeButton("Later") { d, _ -> d.dismiss() }
+                .setTitle("Retribution Update Available")
+                .setMessage("A new version of Retribution is ready. Reload to apply the update now, or reload later to keep using the current version.")
+                .setPositiveButton("Reload Now") { d, _ -> reloadApp(); d.dismiss() }
+                .setNegativeButton("Reload Later") { d, _ -> d.dismiss() }
                 .show()
         }
     }
@@ -225,9 +215,9 @@ object RetributionUpdater {
         activity.runOnUiThread {
             AlertDialog.Builder(activity)
                 .setTitle("Retribution Update Successful")
-                .setMessage("A reload is required for changes to take effect.")
-                .setPositiveButton("Reload") { d, _ -> reloadApp(); d.dismiss() }
-                .setNegativeButton("Later") { d, _ -> d.dismiss() }
+                .setMessage("A new version of Retribution is ready. Reload to apply the update now, or reload later to keep using the current version.")
+                .setPositiveButton("Reload Now") { d, _ -> reloadApp(); d.dismiss() }
+                .setNegativeButton("Reload Later") { d, _ -> d.dismiss() }
                 .show()
         }
     }
@@ -263,6 +253,6 @@ object RetributionUpdater {
 val retributionUpdaterTweak by tweak {
     withAppContext { ctx ->
         RetributionUpdater.init(ctx.dataDir.absolutePath, ctx.packageName)
-        RetributionUpdater.downloadScript(userInitiated = false, showDialog = false)
+        RetributionUpdater.downloadScript(userInitiated = false)
     }
 }
