@@ -82,4 +82,6 @@ You'll need a JDK (25 recommended) and the Android SDK. Once you have those, fol
 
 ## 📄 License
 
+This project is a derivative of [revenge-mod/revenge-xposed](https://github.com/revenge-mod/revenge-xposed). See [ATTRIBUTION.md](ATTRIBUTION.md) for the full attribution and license details for the original work.
+
 This project is licensed under the GPL-3.0 License. See [LICENSE](LICENSE) for details.
