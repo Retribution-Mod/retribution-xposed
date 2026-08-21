@@ -1,15 +1,17 @@
 package io.github.retribution.xposed.tweaks
 
 import android.app.AlertDialog
+import android.os.Handler
+import android.os.Looper
 import android.util.AtomicFile
 import android.widget.Toast
 import androidx.core.util.writeBytes
 import io.github.retribution.logger
-import io.github.retribution.reloadApp
 import io.github.retribution.xposed.RetributionJson
 import io.github.retribution.plugins.Version
 import io.github.retribution.xposed.*
 import io.github.retribution.xposed.tweaks.base.withAppActivity
+import io.github.retribution.xposed.tweaks.base.withAppContext
 import io.github.retribution.xposed.tweaks.plugins.internal.DISCORD_VERSION
 import io.github.retribution.xposed.tweaks.plugins.internal.isDiscordVersionSet
 import io.github.retribution.xposed.tweaks.plugins.internal.showRecoveryAlert
@@ -196,25 +198,15 @@ object RetributionUpdater {
         }
     }
 
-    private fun showUpdateDialog() = withAppActivity { activity ->
-        activity.runOnUiThread {
-            AlertDialog.Builder(activity)
-                .setTitle("Retribution Update Available")
-                .setMessage("A new version of Retribution is ready. Reload to apply the update now, or reload later to keep using the current version.")
-                .setPositiveButton("Reload Now") { d, _ -> reloadApp(); d.dismiss() }
-                .setNegativeButton("Reload Later") { d, _ -> d.dismiss() }
-                .show()
+    private fun showUpdateDialog() = withAppContext { ctx ->
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(ctx, "Retribution update downloaded. Restart Discord to apply.", Toast.LENGTH_LONG).show()
         }
     }
 
-    private fun showSuccessDialog() = withAppActivity { activity ->
-        activity.runOnUiThread {
-            AlertDialog.Builder(activity)
-                .setTitle("Retribution Update Successful")
-                .setMessage("A new version of Retribution is ready. Reload to apply the update now, or reload later to keep using the current version.")
-                .setPositiveButton("Reload Now") { d, _ -> reloadApp(); d.dismiss() }
-                .setNegativeButton("Reload Later") { d, _ -> d.dismiss() }
-                .show()
+    private fun showSuccessDialog() = withAppContext { ctx ->
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(ctx, "Retribution update downloaded. Restart Discord to apply.", Toast.LENGTH_LONG).show()
         }
     }
 
