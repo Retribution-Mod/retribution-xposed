@@ -38,24 +38,40 @@ val bundleDeepLinkTweak by tweak {
 
         when (type) {
             "bundle" -> {
-                try {
-                    RetributionUpdater.applyBundleUrl(url)
-                    reloadApp()
-                } catch (e: SecurityException) {
+                // Validate bundle URL against allowlist before applying
+                if (!isBundleUrlAllowed(url)) {
                     val log = logger("BundleDeepLinkTweak")
-                    log.e("Bundle URL validation failed", e)
+                    log.e("Rejected bundle URL from untrusted source: $url")
                     activity.runOnUiThread {
                         Toast.makeText(
                             activity,
-                            "Security Error: Bundle URL not from trusted source",
+                            "Bundle URL rejected: Only trusted sources are allowed",
                             Toast.LENGTH_LONG
                         ).show()
                     }
+                    return@withAppActivity
                 }
+                RetributionUpdater.applyBundleUrl(url)
+                reloadApp()
             }
             "font", "theme", "plugin" -> stageDeepLink(activity, type, url)
         }
     }
+}
+
+/**
+ * Validates that a bundle URL comes from a trusted source.
+ * Only allows official Retribution bundle URLs from GitHub releases.
+ */
+private fun isBundleUrlAllowed(url: String): Boolean {
+    val allowedPrefixes = listOf(
+        "https://github.com/Retribution-Mod/retribution-bundle/releases/",
+        "https://github.com/Retribution-Mod/retribution-bundle-next/releases/",
+        "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle/",
+        "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle-next/",
+    )
+    
+    return allowedPrefixes.any { url.startsWith(it, ignoreCase = false) }
 }
 
 @Serializable

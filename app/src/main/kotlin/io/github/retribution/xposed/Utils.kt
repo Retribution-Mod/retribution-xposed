@@ -19,6 +19,36 @@ fun File.openFileGuarded() {
     if (!isFile) throw Error("Path is not a file: $path")
 }
 
+/**
+ * Validates that this file path is confined within one of the allowed base directories.
+ * Throws SecurityException if the path attempts to escape the allowed directories.
+ *
+ * @param allowedBases List of allowed base directories (e.g., dataDir, filesDir, cacheDir)
+ * @throws SecurityException if the path is not within any allowed base directory
+ */
+fun File.validatePathConfinement(allowedBases: List<File>) {
+    val canonicalPath = try {
+        this.canonicalFile
+    } catch (e: Exception) {
+        throw SecurityException("Cannot resolve path: ${this.path}", e)
+    }
+
+    val isConfined = allowedBases.any { base ->
+        try {
+            canonicalPath.startsWith(base.canonicalFile)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    if (!isConfined) {
+        throw SecurityException(
+            "Path access denied: ${this.path} is outside allowed directories. " +
+            "Allowed: ${allowedBases.joinToString { it.absolutePath }}"
+        )
+    }
+}
+
 fun Context.versionName(): String {
     val pInfo = packageManager.getPackageInfo(packageName, 0)
     return pInfo.versionName ?: "unknown"
