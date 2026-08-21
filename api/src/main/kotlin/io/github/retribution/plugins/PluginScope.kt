@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import java.io.File
 
 interface PluginScope : HostScope {
-    /** Per-plugin logger, namespaced by [manifest].`id`. */
+    /** Per-plugin logger, namespaced by the plugin ID. */
     val log: Logger
 
     val manifest: PluginManifest
@@ -14,9 +14,9 @@ interface PluginScope : HostScope {
     /**
      * This plugin's data directory (`files/Retribution/plugins/storage/<id>/`), created on first access.
      *
-     * Preserved across plugin updates and deleted on uninstall. Shared with the plugin's JS side
-     * (the `jsonStorage` API stores its documents here, the file name `storage.json` is reserved
-     * as its default document). Store whatever you want in it, in whatever format fits.
+     * Preserved across updates and deleted on uninstall. Shared with the plugin's JS side
+     * (`jsonStorage` keeps its documents here, with `storage.json` reserved as the default).
+     * Store whatever you want in whatever format fits.
      */
     val storageDir: File
 
@@ -24,17 +24,16 @@ interface PluginScope : HostScope {
     val enabled: Boolean
 
     /**
-     * Whether this plugin was started *after* the initial load (e.g. user-toggled at runtime).
-     * Plugins that perform early-only work should react by calling [requireReload].
+     * Whether this plugin was started after the initial load (e.g. user-toggled at runtime).
+     * Plugins with early-only work should call [requireReload] when this is true.
      */
     val startedLate: Boolean
 
     /**
-     * Errors that this plugin encountered during lifecycles. This does not include JS errors.
+     * Errors this plugin hit during its lifecycle. JS errors are not included.
      *
-     * You can emit any arbitrary [Throwable] to surface it in the UI.
-     * Emitted errors are treated as non-fatal: they won't stop or disable the plugin.
-     * Call [stop] or [disable] manually if an error should halt the plugin.
+     * Emit any [Throwable] to surface it in the UI. Emitted errors are non-fatal:
+     * they won't stop or disable the plugin. Call [stop] or [disable] manually to halt it.
      */
     val errors: MutableSharedFlow<Throwable>
 

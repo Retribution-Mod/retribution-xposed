@@ -7,12 +7,12 @@ import io.github.retribution.bridge.RetributionBridge
 
 /**
  * Runtime surface every extension runs against. Carries the basics ([appInfo], [classLoader], [modulePath]),
- * the JS <-> native [bridge], and lifecycle hooks for grabbing the app's [Context] / [Activity].
+ * the JS <-> native [bridge], and lifecycle hooks for accessing the app's [Context] / [Activity].
  *
  * A plugin receives one via [io.github.retribution.plugins.PluginScope], which extends this.
  */
 interface HostScope {
-    /** Path to the module APK on disk. Use to load bundled assets. */
+    /** Path to the module APK on disk; use it to load bundled assets. */
     val modulePath: String
 
     /** [ApplicationInfo] of the target app. */
@@ -25,14 +25,14 @@ interface HostScope {
     val bridge: RetributionBridge
 
     /**
-     * Run [block] with the target app's [Context]. Fires immediately if a [Context] is already captured;
-     * otherwise queued until one is available.
+     * Runs [block] with the target app's [Context]. Fires immediately if a [Context] is already captured;
+     * otherwise it queues until one is available.
      */
     fun withAppContext(block: (Context) -> Unit)
 
     /**
-     * Run [block] with the target app's [Activity]. Fires immediately if an [Activity] is already available;
-     * otherwise queued until one is created.
+     * Runs [block] with the target app's [Activity]. Fires immediately if an [Activity] is already available;
+     * otherwise it queues until one is created.
      */
     fun withAppActivity(block: (Activity) -> Unit)
 }

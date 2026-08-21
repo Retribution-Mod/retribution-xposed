@@ -22,10 +22,10 @@ import java.lang.reflect.Member
 import java.lang.reflect.Modifier
 import java.util.zip.ZipFile
 
-/** Directory (relative to app data dir) every plugin's distributions. */
+/** Directory (relative to the app data dir) for each plugin's distributions. */
 private const val PLUGINS_DIR = "files/Retribution/plugins/dist"
 
-/** Directory (relative to app data dir) for plugin data. */
+/** Directory (relative to the app data dir) for plugin data. */
 private const val PLUGIN_STORAGE_DIR = "files/Retribution/plugins/storage"
 
 /** Reserved subdirectory used as the [DexClassLoader] optimized-output dir. */
@@ -33,12 +33,12 @@ private const val DEX_CACHE_DIR = ".dex-cache"
 
 private const val MANIFEST_FILE = "manifest.json"
 
-/** The supported `manifest.json` format version. */
+/** Supported `manifest.json` format version. */
 internal const val MANIFEST_FORMAT = 1
 
 @Serializable
 internal data class ExternalManifest(
-    /** Manifest format version. Required; only [MANIFEST_FORMAT] is accepted. */
+    /** Manifest format version. Only [MANIFEST_FORMAT] is accepted. */
     val format: Int,
     val id: String,
     val name: String,
@@ -46,7 +46,7 @@ internal data class ExternalManifest(
     val author: String = "",
     /* See [validatedPluginIcon]. */
     val icon: String? = null,
-    /** The plugin's version. */
+    /** Plugin version. */
     val version: String,
     /** Dependencies keyed by plugin ID: `{ "<id>": { "version"?: "<range>", "optional"?: true } }`. */
     val dependencies: Map<String, ExternalDependency> = emptyMap(),
@@ -71,13 +71,13 @@ internal data class ExternalManifest(
 
 @Serializable
 internal data class ExternalDependency(
-    /** Version range; `null` (an empty object `{}`) means `"*"`. */
+    /** Version range; `null` or an empty object means `"*"`. */
     val version: String? = null,
-    /** Optional dependencies that never block the dependent. Missing/unsatisfied/failed ones are ignored. */
+    /** Optional dependencies don't block the dependent; missing, unsatisfied, or failed ones are ignored. */
     val optional: Boolean = false,
 )
 
-/** Maximum accepted length of a `data:` icon value. */
+/** Max allowed length of a `data:` URL icon. */
 private const val MAX_ICON_DATA_URL_LENGTH = 128 * 1024
 
 private val URI_SCHEME_REGEX = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
@@ -126,27 +126,23 @@ internal data class ExternalAndroidDist(
     @SerialName("class") val className: String,
 )
 
-/** A plugin directory whose manifest has been parsed but whose artifacts are not loaded yet. */
+/** A plugin directory with a parsed manifest but unloaded artifacts. */
 internal class ParsedExternalPlugin(val dir: File, val manifest: ExternalManifest) {
-    /**
-     * Dependency IDs deemed available for this plugin. Unsatisfied dependencies will be removed later.
-     */
+    /** Dependency IDs available to this plugin. Unsatisfied ones are removed later. */
     var availableDeps: Set<String> = manifest.dependencies.keys
 
-    /**
-     * Optional dependencies that are installed but unsatisfied, so this plugin loaded without linking them.
-     */
+    /** Optional dependencies that are installed but unsatisfied (this plugin loads without them). */
     val unsatisfiedOptionalDeps = mutableSetOf<String>()
 }
 
 internal class DiscoveryFailure(
     val manifest: PluginManifest?,
-    /** Everything wrong with the plugin, eg. one entry per unsatisfied/failed dependency. Never empty. */
+    /** Everything wrong with the plugin (one entry per unsatisfied/failed dependency). Never empty. */
     val errors: List<PluginErrorInfo>,
 ) {
     /**
-     * True when the failure is the plugin's own fault (bad code, bad manifest) rather than an environmental one (dependencies).
-     * Own-fault plugins get disabled instead of session-skipped, matching JS disabling a plugin whose script throws at evaluation.
+     * Whether the failure is the plugin's own fault (bad code or manifest) rather than environmental (missing deps).
+     * Own-fault plugins are disabled, like a JS plugin that throws during evaluation.
      */
     val isPluginFault: Boolean
         get() = errors.any {
@@ -154,7 +150,7 @@ internal class DiscoveryFailure(
         }
 }
 
-/** Record a session-skip [DiscoveryFailure] for [id] and log it. */
+/** Records a session-skip [DiscoveryFailure] for [id] and logs it. */
 private fun MutableMap<String, DiscoveryFailure>.sessionSkip(
     id: String,
     manifest: PluginManifest?,
@@ -172,19 +168,15 @@ internal class ExternalDiscovery(
 )
 
 /**
- * Scan `[dataDir]/files/Retribution/plugins` for **all** external plugins.
- * Each plugin lives in its own `<id>/` directory containing a [MANIFEST_FILE] and its `dist` artifacts.
+ * Scans `[dataDir]/files/Retribution/plugins` for all external plugins.
+ * Each plugin lives in its own `<id>/` directory with a [MANIFEST_FILE] and its `dist` artifacts.
  *
- * - Native plugins (`dist.android`) can be loaded via [DexClassLoader] using the **module's own** class loader
- *   as the parent so the plugin can resolve the Retribution plugin API.
- * - If JS-only (no `dist.android`), an empty native body is assigned; their `dist.script` source is handed to JS
- *   via the `getPlugins` bridge method.
+ * - Native plugins (`dist.android`) are loaded via [DexClassLoader] with the **module's** class loader
+ *   as parent so they can resolve the Retribution API.
+ * - JS-only plugins (no `dist.android`) get an empty native body; their `dist.script` is exposed through `getPlugins`.
  *
- * Dependencies are verified before anything is loaded:
- * - A plugin whose dependency is missing (not an internal plugin nor another external plugin) is skipped,
- *   cascading to its dependents.
- * - Plugins load in dependency order (dependencies before dependents), so native externals can link
- *   against another plugin's public API via [CompositeClassLoader]. Cycles are skipped.
+ * Dependencies are verified first. Missing deps skip the plugin and cascade to dependents.
+ * Plugins load in dependency order, letting native plugins link through [CompositeClassLoader]. Cycles are skipped.
  */
 internal fun discoverExternalPlugins(
     dataDir: String,
@@ -266,11 +258,11 @@ internal fun discoverExternalPlugins(
     return ExternalDiscovery(result, failures)
 }
 
-/** Why a dependency is unsatisfied: a [PluginErrorCodes] code plus the human reason. */
+/** Reason a dependency is unsatisfied: a [PluginErrorCodes] code and a human-readable message. */
 private class DependencyProblem(val code: String, val reason: String)
 
 /**
- * The reason [dep] is unsatisfied by the dependency [version] (null = missing), or `null` when satisfied.
+ * Why [dep] is not satisfied by [version] (`null` means the dependency is missing), or `null` if it is satisfied.
  */
 private fun unsatisfiedDependencyReason(depId: String, dep: ExternalDependency, version: Version?): DependencyProblem? {
     val range = dep.version?.let(VersionRange::parse) ?: VersionRange.ANY
@@ -290,8 +282,8 @@ private fun unsatisfiedDependencyReason(depId: String, dep: ExternalDependency, 
 }
 
 /**
- * Drop plugins with unsatisfiable required dependencies (cascading), then sort the rest so dependencies load before dependents.
- * Missing/unsatisfied optionals are removed from [ParsedExternalPlugin.availableDeps], Members of a cycle are skipped.
+ * Drops plugins with unsatisfiable required dependencies (cascading), then sorts the rest so dependencies load before dependents.
+ * Missing/unsatisfied optionals are removed from [ParsedExternalPlugin.availableDeps]. Cycle members are skipped.
  */
 private fun orderByDependencies(
     parsed: Map<String, ParsedExternalPlugin>,
@@ -378,7 +370,7 @@ internal fun requireValidPluginId(id: String) {
     }
 }
 
-/** Parse a single `<id>/` plugin directory's manifest. */
+/** Parses the manifest of a single `<id>/` plugin directory. */
 internal fun parseExternalPluginDir(dir: File): ParsedExternalPlugin = ParsedExternalPlugin(
     dir,
     RetributionJson.decodeFromString(ExternalManifest.serializer(), File(dir, MANIFEST_FILE).readText())
@@ -386,10 +378,10 @@ internal fun parseExternalPluginDir(dir: File): ParsedExternalPlugin = ParsedExt
 )
 
 /**
- * Parse and load a single `<id>/` plugin directory into a [PluginFactory].
+ * Parses and loads a single `<id>/` plugin directory into a [PluginFactory].
  *
- * Throws when malformed input, missing required dependencies, or unsatisfied version ranges.
- * Unavailable optionals are ignored and warned.
+ * Throws on bad input, missing required dependencies, or unsatisfied version ranges.
+ * Unavailable optionals are ignored and logged.
  */
 internal fun readExternalPluginDir(dir: File, knownVersions: Map<String, Version>, log: Logger): PluginFactory {
     val parsed = parseExternalPluginDir(dir)
@@ -409,7 +401,7 @@ internal fun readExternalPluginDir(dir: File, knownVersions: Map<String, Version
     return buildExternalFactory(parsed, log)
 }
 
-/** Load a parsed plugin's artifacts into a [PluginFactory]. Throws on any malformed input. */
+/** Loads a parsed plugin's artifacts into a [PluginFactory]; throws on bad input. */
 private fun buildExternalFactory(parsed: ParsedExternalPlugin, log: Logger): PluginFactory {
     val (dir, manifest) = parsed.dir to parsed.manifest
     val dexCache = File(dir.parentFile, DEX_CACHE_DIR).apply { mkdirs() }
@@ -448,16 +440,16 @@ private fun buildExternalFactory(parsed: ParsedExternalPlugin, log: Logger): Plu
     )
 }
 
-/** Class loaders of already-loaded native external plugins, keyed by plugin id, for dependency linking. */
+/** Class loaders for already-loaded native external plugins, keyed by plugin ID. */
 private val nativePluginLoaders = mutableMapOf<String, ClassLoader>()
 
-/** Forget a plugin's class loader (on uninstall) so a re-installation doesn't link against a stale one. */
+/** Forgets a plugin's class loader on uninstall so re-installation won't link a stale one. */
 internal fun forgetNativePluginLoader(pluginId: String) {
     nativePluginLoaders.remove(pluginId)
 }
 
 /**
- * Delegates to the module class loader first (standard parent delegation), then to each dependency plugin's loader
+ * Tries the module class loader first, then each dependency plugin's loader.
  */
 private class CompositeClassLoader(
     parent: ClassLoader,
@@ -515,16 +507,16 @@ private fun loadNativeBuilder(
 }
 
 /**
- * Resolve the first [PluginBuilder] exposed by [clazz].
+ * Resolves the first [PluginBuilder] exposed by [clazz].
  *
  * A Kotlin top-level `val myPlugin = plugin { ... }` compiles to a `private static` backing field
- * + `public static` getter on the file-facade class.
+ * and a `public static` getter on the file-facade class.
  *
  * Resolution order (sorted by name):
- * 1. A public static no-arg getter whose return type is a [PluginBuilder] (the top-level `val`).
- * 2. A static field whose type is a [PluginBuilder] (read reflectively as a fallback).
+ * 1. A public, static, no-arg getter returning [PluginBuilder] (the top-level `val`).
+ * 2. A static field of type [PluginBuilder] (read reflectively as a fallback).
  *
- * When more than one candidate exists, the first is used and a warning is logged.
+ * If multiple candidates exist, the first is used and a warning is logged.
  */
 private fun resolvePluginBuilder(clazz: Class<*>, log: Logger): PluginBuilder? {
     val getters = clazz.declaredMethods
@@ -548,7 +540,7 @@ private fun resolvePluginBuilder(clazz: Class<*>, log: Logger): PluginBuilder? {
 }
 
 /**
- * Pick the first (name-sorted) reflective candidate, warn when more >1, and [read] the [PluginBuilder].
+ * Picks the first (name-sorted) reflective candidate, warns if there are more than one, and [read]s the [PluginBuilder].
  */
 private fun <T> firstBuilderCandidate(
     candidates: List<T>,
@@ -577,18 +569,18 @@ private var pendingPick: ((Activity, android.net.Uri) -> Unit)? = null
 internal class InstallPrompt(
     val token: String,
     val manifest: ExternalManifest,
-    /** The installed version this would replace. */
+    /** Installed version this prompt would replace. */
     val replaces: Version?,
 )
 
-/** Staged sideload installs keyed by single-use token. At most one at a time. */
+/** Staged sideload installs keyed by single-use token. */
 private val pendingInstalls = mutableMapOf<String, StagedPlugin>()
 
 /**
- * Open the document picker for a plugin ZIP, extract + validate, and hand an [InstallPrompt]
- * to [onReady] without applying. Failures are logged and reported through [onReady].
+ * Opens the document picker for a plugin ZIP, extracts and validates it, and hands an [InstallPrompt]
+ * to [onReady] without applying. Failures are reported through [onReady].
  *
- * The callback fires the confirmation event to JS. [confirmPluginInstall] applies or discards the plan.
+ * The callback fires the confirmation event to JS; [confirmPluginInstall] applies or discards the plan.
  *
  * A canceled pick does nothing. A new pick discards the previous unconfirmed plan.
  */
@@ -656,8 +648,8 @@ internal fun promptInstallPlugin(
 }
 
 /**
- * Applies or discards a staged sideload install. 
- * Unknown or stale tokens, and declines return `null` after discarding.
+ * Applies or discards a staged sideload install.
+ * Unknown or stale tokens, and declines, return `null` after discarding.
  *
  * @return The applied [InstallResult], or `null` when nothing was applied.
  */
@@ -696,24 +688,24 @@ private fun discardPendingInstalls() {
 }
 
 internal sealed class InstallResult {
-    /** New plugin install, can be loaded immediately. */
+    /** New plugin install; can be loaded immediately. */
     class New(val factory: PluginFactory) : InstallResult()
 
-    /** An update was installed. It'll be loaded next session. */
+    /** Installed update; will load on the next session. */
     class Updated(val manifest: ExternalManifest, val version: Version) : InstallResult()
 }
 
-/** An extracted-and-validated plugin ZIP that hasn't replaced any installation yet. */
+/** A validated, extracted plugin ZIP that hasn't replaced an installation yet. */
 internal class StagedPlugin(val dir: File, val manifest: ExternalManifest)
 
-/** Maximum total decompressed size of a plugin ZIP (1 GiB). */
+/** Max total decompressed size for a plugin ZIP (1 GiB). */
 private const val MAX_EXTRACTED_ZIP_BYTES: Long = 1L shl 30
 
 /**
- * Extract a plugin ZIP into `<root>/[tmpName]/` and parse + validate its manifest.
+ * Extracts a plugin ZIP into `<root>/[tmpName]/` and parses and validates its manifest.
  *
- * [input] is one-shot (content resolver / network), so it is spooled to a file first,
- * allowing us to check and validate the manifest before writing a single plugin file.
+ * [input] is one-shot (content resolver / network), so it is spooled to a file first
+ * so the manifest can be checked before any plugin file is written.
  *
  * Extraction is capped at [MAX_EXTRACTED_ZIP_BYTES] decompressed bytes.
  */
@@ -785,7 +777,7 @@ internal fun extractPluginZip(input: InputStream, root: File, tmpName: String): 
 }
 
 /**
- * Copy at most [budget] bytes to [dest], invoking [onExceeded] the moment the stream would go past it.
+ * Copies at most [budget] bytes to [dest], calling [onExceeded] as soon as the stream would exceed it.
  * Returns the number of bytes copied.
  */
 private inline fun InputStream.copyToCapped(
@@ -804,7 +796,7 @@ private inline fun InputStream.copyToCapped(
     }
 }
 
-/** Create or replace `[root]/<id>/` with a staged plugin. The new files take effect in the next session. */
+/** Creates or replaces `[root]/<id>/` with a staged plugin. The new files take effect in the next session. */
 internal fun applyStagedPlugin(
     staged: StagedPlugin,
     root: File,

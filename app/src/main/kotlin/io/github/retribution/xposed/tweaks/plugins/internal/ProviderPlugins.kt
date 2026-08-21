@@ -4,26 +4,24 @@ import io.github.retribution.plugins.*
 import io.github.retribution.xposed.tweaks.plugins.InternalPluginFlags
 
 /**
- * Reserved dependency IDs that are provided by internal provider plugins.
- *
- * These are injected with [VersionRange.ANY][io.github.retribution.plugins.VersionRange.ANY] into every internal plugin at registration,
- * and MUST be declared by external plugins.
+ * Reserved dependency IDs supplied by internal provider plugins.
+ * Injected as [VersionRange.ANY] into every internal plugin and required for external plugins.
  */
 internal val RESERVED_DEPENDENCY_IDS: Set<String> = setOf(API_DEPENDENCY_ID, DISCORD_DEPENDENCY_ID)
 
 /** The version of the host Discord app. */
 internal lateinit var DISCORD_VERSION: Version
 
-/** Safe check for whether [DISCORD_VERSION] has been set by the version retriever. */
+/** Check whether [DISCORD_VERSION] has already been set. */
 internal fun isDiscordVersionSet(): Boolean = ::DISCORD_VERSION.isInitialized
 
 /**
- * Provider plugin representing Retribution's API, providing the Retribution module's class loader
- * that external native plugins link against. It also tracks the API version so an update automatically re-verifies every plugin's compatibility range.
+ * Internal provider for the Retribution API. Exposes the module class loader external native plugins link
+ * against and tracks the API version so plugin compatibility is re-checked after updates.
  *
- * > `CompositeClassLoader`'s parent also fulfills the actual lookup, so this plugin is redundant for providing the class loader.
+ * > `CompositeClassLoader`'s parent already handles the lookup, so the class-loader part here is redundant.
  *
- * The JS API is split into multiple `Retribution.api.*` sub-plugins which get run at different JS stages, so this has no JS entry point.
+ * The JS API is split into `Retribution.api.*` sub-plugins run at different stages; this entry point has no JS body.
  */
 internal val apiProviderPlugin = internalPlugin(
     PluginManifest(
@@ -37,9 +35,9 @@ internal val apiProviderPlugin = internalPlugin(
 ) {}
 
 /**
- * Provider plugin representing the host Discord app.
+ * Internal provider for the host Discord app.
  *
- * Tracks the host app so a Discord update automatically re-verifies every plugin's compatibility range.
+ * Tracks the Discord version so plugin compatibility is re-checked after a Discord update.
  */
 internal val discordProviderPlugin by lazy {
     internalPlugin(

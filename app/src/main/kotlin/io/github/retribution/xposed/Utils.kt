@@ -20,11 +20,10 @@ fun File.openFileGuarded() {
 }
 
 /**
- * Validates that this file path is confined within one of the allowed base directories.
- * Throws SecurityException if the path attempts to escape the allowed directories.
+ * Confirms this file path stays inside one of the allowed base directories.
  *
- * @param allowedBases List of allowed base directories (e.g., dataDir, filesDir, cacheDir)
- * @throws SecurityException if the path is not within any allowed base directory
+ * @param allowedBases Allowed base directories (e.g., dataDir, filesDir, cacheDir)
+ * @throws SecurityException if the path escapes all allowed bases
  */
 fun File.validatePathConfinement(allowedBases: List<File>) {
     val canonicalPath = try {

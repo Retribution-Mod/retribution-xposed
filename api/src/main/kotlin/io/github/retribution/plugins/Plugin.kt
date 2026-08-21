@@ -3,17 +3,17 @@ package io.github.retribution.plugins
 import io.github.retribution.api.BuildConfig
 
 /**
- * A Retribution plugin. Use the [plugin] builder to create a plugin.
+ * A Retribution plugin. Use the [plugin] builder to create one.
  *
  * Plugins are loaded once, then [start] runs with [PluginScope].
- * If you need access to [android.content.Context], capture it with `ctx.withAppContext { ... }` inside [start].
+ * To access [android.content.Context], use `ctx.withAppContext { ... }` inside [start].
  * Override only what you need; both lifecycle hooks are no-ops by default.
  */
 abstract class Plugin internal constructor(val manifest: PluginManifest) {
-    /** Called once when the plugin is loaded. Register bridge methods + install hooks here. */
+    /** Called once when the plugin is loaded. Register bridge methods and install hooks here. */
     open fun start(ctx: PluginScope) {}
 
-    /** Called when the plugin is being torn down. */
+    /** Called when the plugin is torn down. */
     open fun stop(ctx: PluginScope) {}
 }
 
@@ -30,42 +30,40 @@ data class PluginManifest(
 
 /**
  * A plugin dependency specification.
- * The dependency's plugin ID is the key in [PluginManifest.dependencies].
+ * The plugin ID is the key in [PluginManifest.dependencies].
  */
 data class PluginDependency(
     /**
      * Version range the dependency must satisfy.
-     * 
-     * Defaults to [VersionRange.ANY] (any version satisfies the dependency).
+     *
+     * Defaults to [VersionRange.ANY].
      */
     val version: VersionRange = VersionRange.ANY,
     /**
-     * When `true`, this dependency never blocks the dependent when missing, version-unsatisfied, or failed to load.
+     * When `true`, the dependent isn't blocked if this dependency is missing, version-unsatisfied, or failed to load.
      *
-     * When available, the dependency is ordered first and its class loader is chained,
-     * so availability is detectable via `Class.forName(name, false, javaClass.classLoader)`.
+     * When available, it loads first and its class loader is chained,
+     * so you can check availability with `Class.forName(name, false, javaClass.classLoader)`.
      */
     val optional: Boolean = false,
 )
 
-/**
- * The current Retribution plugin API version.
- */
+/** The current Retribution plugin API version. */
 val API_VERSION: Version = Version.parse(BuildConfig.API_VERSION)
 
 /**
- * The reserved dependency ID resolving to the [API_VERSION].
+ * Reserved dependency ID resolving to [API_VERSION].
  *
- * External plugins **MUST** declare a dependency on this ID. Plugins that don't won't be loaded.
+ * External plugins **MUST** declare this dependency or they won't be loaded.
  */
 const val API_DEPENDENCY_ID: String = "Retribution.api"
 
 /**
- * The reserved dependency ID resolving to the host Discord app's version.
+ * Reserved dependency ID resolving to the host Discord app's version.
  *
- * The version is determined at runtime based on the app the module is loaded into,
+ * The version is determined at runtime from the app the module is loaded into,
  * so it lives in the loader, not here. This library only defines the contract.
  *
- * External plugins **MUST** declare a dependency on this ID. Plugins that don't won't be loaded.
+ * External plugins **MUST** declare this dependency or they won't be loaded.
  */
 const val DISCORD_DEPENDENCY_ID: String = "discord"

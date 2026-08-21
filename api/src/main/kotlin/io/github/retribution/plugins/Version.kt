@@ -1,22 +1,22 @@
 package io.github.retribution.plugins
 
 /**
- * A version under the Retribution versioning scheme.
+ * A version in the Retribution scheme.
  *
  * ## Format
  *
  * `<n>[.<n>]*(-<label>)?`
  *
- * One or more non-negative integer segments, optionally followed by a single lowercase-alphanumeric label.
+ * One or more non-negative numeric segments, optionally followed by a single lowercase-alphanumeric label.
  * Leading zeros in numeric segments are allowed and insignificant (`1.02` == `1.2`).
  *
  * ### Ordering
  *
- * 1. Number are split into segments by `.`; the shorter side right-padded with zeros (`1.2` == `1.2.0`).
- * 2. If numeric parts are equal: bare > labeled (`1.2.0` > `1.2.0-rc`). Every label is a prerelease.
- * 3. If both labeled, digit-run comparison is done. Labels are split into alternating non-digit/digit runs;
+ * 1. Versions are split into `.` segments; the shorter one is right-padded with zeros (`1.2` == `1.2.0`).
+ * 2. If numeric parts are equal, bare beats labeled (`1.2.0` > `1.2.0-rc`). Every label is a prerelease.
+ * 3. If both are labeled, a digit-run comparison is done. Labels are split into alternating non-digit/digit runs;
  *    non-digit runs compare byte-lexically, digit runs numerically (`beta2` < `beta10`).
- *    A label that is a run-prefix of another sorts first (`beta` < `beta1`).
+ *    A label that is a prefix of another sorts first (`beta` < `beta1`).
  */
 data class Version(
     val nums: List<Int>,
@@ -50,11 +50,11 @@ data class Version(
         private val LABEL_REGEX = Regex("[a-z0-9]+")
 
         /**
-         * Parses a version string. 
+         * Parses a version string.
          * Leading zeros in numeric segments are allowed and insignificant (`1.02` == `1.2`).
          *
-         * Throws [IllegalArgumentException] on: empty string, non-numeric segments, empty label (`1.0-`),
-         * or labels containing anything but `[a-z0-9]`.
+         * Throws [IllegalArgumentException] for empty strings, non-numeric segments, empty labels (`1.0-`),
+         * or labels that contain anything other than `[a-z0-9]`.
          */
         fun parse(value: String): Version {
             require(value.isNotEmpty()) { "Version string must not be empty" }
@@ -72,7 +72,7 @@ data class Version(
         }
 
         /**
-         * Digit-run comparison: split into alternating runs of non-digits and digits;
+         * Digit-run comparison: labels are split into alternating runs of non-digits and digits;
          * non-digit runs compare byte-lexically, digit runs numerically.
          */
         private fun compareLabels(a: String, b: String): Int {
@@ -113,12 +113,12 @@ data class Version(
 }
 
 /**
- * A version range: either the wildcard `"*"` (satisfied by every version) or a conjunction of
+ * A version range: either the wildcard `"*"` (matches any version) or a conjunction of
  * explicit bounds (`<` `<=` `=` `>=` `>`), e.g. `">=1.0 <2"`.
  *
- * Satisfaction is evaluated on the **integers only**, the candidate's label is stripped before
- * bounds checking (`1.5-rc` satisfies `>=1.0 <2`; `2.0-rc` does NOT satisfy `<2`).
- * 
+ * Satisfaction uses only the numeric parts; the candidate's label is stripped before
+ * bounds checking (`1.5-rc` satisfies `>=1.0 <2`; `2.0-rc` does not satisfy `<2`).
+ *
  * Bounds themselves must be bare versions (no labels).
  */
 class VersionRange private constructor(val bounds: List<Bound>) {
@@ -128,7 +128,7 @@ class VersionRange private constructor(val bounds: List<Bound>) {
         LTE("<="), GTE(">="), LT("<"), GT(">"), EQ("=");
     }
 
-    /** Whether [version] satisfies every bound, compared on integers only (label stripped). */
+    /** Whether [version] satisfies every bound, ignoring any label. */
     fun satisfies(version: Version): Boolean {
         val bare = if (version.label == null) version else Version(version.nums)
         return bounds.all { bound ->
@@ -147,14 +147,14 @@ class VersionRange private constructor(val bounds: List<Bound>) {
         if (bounds.isEmpty()) "*" else bounds.joinToString(" ") { "${it.op.symbol}${it.version}" }
 
     companion object {
-        /** The wildcard range (`"*"`): satisfied by every version, labels included. */
+        /** The wildcard range (`"*"`), which matches every version including labels. */
         val ANY = VersionRange(emptyList())
 
         /**
-         * Parses `"*"` to [ANY], or a whitespace-separated conjunction of bounds: `">=1.0 <2"`.
+         * Parses `"*"` as [ANY], or a whitespace-separated list of bounds like `">=1.0 <2"`.
          *
-         * Throws [IllegalArgumentException] on blank input, unknown operators (`^`, `~`),
-         * missing operator, or labeled bound versions (`>=1.0-rc`).
+         * Throws [IllegalArgumentException] for blank input, unknown operators (`^`, `~`),
+         * missing operators, or labeled bound versions (`>=1.0-rc`).
          */
         fun parse(value: String): VersionRange {
             if (value.trim() == "*") return ANY

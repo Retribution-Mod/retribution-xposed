@@ -21,18 +21,15 @@ private class PluginRegistry {
     val factories = mutableMapOf<String, PluginFactory>()
 
     /**
-     * Plugins that failed discovery this session (session-skip). Disjoint from [factories]
-     * by construction: [add] drops the failure when an id gets a factory.
+     * Plugins that failed discovery this session.
+     * [add] drops the failure when an ID gets a factory.
      */
     val discoveryFailures = mutableMapOf<String, DiscoveryFailure>()
 
     val loaded = mutableMapOf<String, LoadedPlugin>()
 
     /**
-     * Versions updated on disk this session, applied at next boot.
-     *
-     * All updates only stage files on disk, requiring a reload.
-     * This is to not break what's already working, a reload takes at max a few seconds.
+     * Plugin updates staged on disk this session, applied after the next reload.
      */
     val pendingUpdates = mutableMapOf<String, Version>()
 
@@ -61,9 +58,7 @@ private class PluginRegistry {
         bootErrors.remove(id)
     }
 
-    /**
-     * Forgets every **in-memory** trace of a plugin, including its cached DEX loader.
-     */
+    /** Clears every in-memory trace of a plugin, including its cached DEX loader. */
     fun forget(id: String) {
         factories.remove(id)
         discoveryFailures.remove(id)
@@ -77,9 +72,7 @@ private val registry = PluginRegistry()
 private inline val loaded get() = registry.loaded
 private lateinit var log: Logger
 
-/**
- * Loads plugins and exposes `Retribution.plugins.*` bridge methods.
- */
+/** Loads plugins and exposes the `Retribution.plugins.*` bridge methods. */
 val pluginLoader by tweak {
     io.github.retribution.xposed.tweaks.plugins.log = this@tweak.log
 
@@ -194,11 +187,8 @@ val pluginLoader by tweak {
     /**
      * `Retribution.plugins.confirmInstall(token, accepted) -> { result }`
      *
-     * Answers a [EVENT_PLUGIN_INSTALL_RESULT]` prompt. `accepted = false`, an unknown token, or a stale token discards the plan,
-     * and returns `cancelled`.
-     *
-     * Accepting applies the staged install, returning `installed` for a fresh plugin (registered disabled),
-     * `pending` for an update (applies after reload).
+     * Responds to an install prompt. Rejecting, an unknown token, or a stale token cancels the plan.
+     * Accepting stages the install: `installed` for a new plugin, `pending` for an update.
      */
     registerNativeAsyncMethod("Retribution.plugins.confirmInstall") { args ->
         val token = args.getOrNull(0) as? String ?: throw Error("Expected an install token")
@@ -225,7 +215,7 @@ val pluginLoader by tweak {
     /**
      * `Retribution.plugins.planInstall(id, version?, channel?, filteredRepos?) -> InstallPlan`
      *
-     * Resolves an install against cached indexes and returns a plan for JS to confirm and pass to `installFromRepo`.
+     * Resolves an install from cached indexes and returns a plan for JS to confirm.
      */
     registerNativeAsyncMethod("Retribution.plugins.planInstall") { args ->
         val id = args.getOrNull(0) as? String ?: throw Error("Expected a plugin ID")
@@ -278,9 +268,8 @@ val pluginLoader by tweak {
     /**
      * `Retribution.plugins.install(plan) -> { installed, pending, skipped }`
      *
-     * Download, verify, then apply on disk. New plugins load right away. Updates only touch the disk and wait for a reload.
-     * A manifest that doesn't match the plan aborts the whole plan with `dist/` untouched.
-     * Concurrent calls get queued and run one by one, re-checking after each.
+     * Downloads and verifies each action, then applies it on disk. New plugins load immediately; updates take effect after a reload.
+     * A manifest mismatch aborts the whole plan and leaves `dist/` untouched. Concurrent calls run one at a time.
      */
     registerNativeAsyncMethod("Retribution.plugins.install") { args ->
         val planMap = args.firstOrNull() as? Map<*, *> ?: throw Error("Expected an install plan")
@@ -361,8 +350,7 @@ val pluginLoader by tweak {
     /**
      * `Retribution.plugins.repos.listUpdates(url) -> Update[]`
      *
-     * Checks one repo's cached index against the plugins pinned to it.
-     * An update exists when the pinned channel points to something newer.
+     * Checks a repo's cached index for updates to plugins pinned to it.
      */
     registerNativeAsyncMethod("Retribution.plugins.repos.listUpdates") { args ->
         val url = args.firstOrNull() as? String ?: throw Error("Expected a repository URL")
@@ -522,8 +510,8 @@ val pluginLoader by tweak {
 }
 
 /**
- * Builds and starts a plugin. Throws when the plugin cannot be built or wired.
- * Exceptions thrown by the plugin's own `start()` are captured into its scope's errors instead.
+ * Builds and starts a plugin, throwing if it can't be built or wired.
+ * The plugin's own `start()` errors go into its scope.
  */
 private fun loadPlugin(
     tweakCtx: HostScope,
@@ -587,9 +575,7 @@ private fun loadPlugin(
     return entry
 }
 
-/**
- * Stops a running plugin, taking every dependent that's actually linked to it down first.
- */
+/** Stops a plugin after stopping any dependents that are linked to it. */
 private fun stopPlugin(pluginId: String) {
     if (pluginId !in loaded) return
 
@@ -624,10 +610,8 @@ private fun stopPlugin(pluginId: String) {
 }
 
 /**
- * Disables and stops a plugin. Required dependents (transitively) lose their persisted enabled state too,
- * since they can't run without this plugin anymore. Linked optionals only stop, they can load fine next start.
- *
- * Throws when the plugin is essential.
+ * Disables and stops a plugin, also clearing the enabled state of required dependents.
+ * Linked optional dependents stop but can load again on the next start. Throws if the plugin is essential.
  */
 private fun disablePlugin(pluginId: String) {
     require(!isEssential(pluginId)) { "Plugin $pluginId is essential and cannot be disabled" }
@@ -682,8 +666,8 @@ internal fun clearPersistedState(pluginId: String) {
 }
 
 /**
- * Problems blocking this plugin from being enabled: required deps that are missing,
- * version-unsatisfied, or disabled. Optional deps never block. Empty means no issues.
+ * Lists problems that would block this plugin from being enabled: missing, version-unsatisfied, or disabled required dependencies.
+ * Optional dependencies are ignored. Empty means no issues.
  */
 private fun PluginFactory.dependencyProblems(
     factories: Map<String, PluginFactory>,
@@ -707,7 +691,7 @@ private fun PluginFactory.dependencyProblems(
     }
 }
 
-/** Whether a plugin is currently enabled: live flags if loaded, else persisted state + internal-flag defaults. */
+/** Whether a plugin is currently enabled (live flags, persisted state, or internal-flag defaults). */
 private fun isPluginEnabledNow(pluginId: String, factory: PluginFactory?): Boolean {
     loaded[pluginId]?.let { return PluginFlags.ENABLED in it.scope.flags.value }
     val states = PluginStatesStore.states
@@ -719,30 +703,26 @@ private fun isPluginEnabledNow(pluginId: String, factory: PluginFactory?): Boole
 }
 
 /**
- * A class that contains a [PluginBuilder], its corresponding [PluginManifest],
- * and any internal flags that should be applied to the plugin.
- *
- * Enough to make a plugin registerable.
+ * Holds a [PluginBuilder], its [PluginManifest], and any internal flags
+ * so a plugin can be registered.
  */
 internal class PluginFactory(
     val builder: PluginBuilder,
     val manifest: PluginManifest,
     val internalFlags: Set<InternalPluginFlags> = emptySet(),
-    /** Absolute path to the plugin's `dist.script` JS bundle. Its source is handed to JS via `getPlugins`. */
+    /** Path to the plugin's `dist.script` JS bundle, exposed to JS through `getPlugins`. */
     val scriptPath: String? = null,
-    /**
-     * Optional dependencies that are installed but unsatisfied, so this plugin loaded without linking them.
-     */
+    /** Optional dependencies that are installed but unsatisfied (this plugin loads without them). */
     val unsatisfiedOptionalDependencies: Set<String> = emptySet(),
 )
 
-/** A started plugin together with its scope, so it can be stopped/restarted later. */
+/** A running plugin with its scope, used to stop or restart it later. */
 private class LoadedPlugin(
     val plugin: Plugin,
     val scope: PluginScopeImpl,
-    /** Collector persisting flag changes + broadcasting them to JS. Canceled on stop. */
+    /** Persists flag changes and broadcasts them to JS. Cancelled on stop. */
     val persistJob: Job,
-    /** Collector syncing native errors + broadcasting them to JS. Canceled on stop. */
+    /** Syncs native errors and broadcasts them to JS. Cancelled on stop. */
     val errorSyncJob: Job,
 ) {
     /** Whether the native side is currently running (`start` called without a matching `stop`). */
@@ -816,8 +796,7 @@ private val PluginScope.errorsJSPayload
     get() = errors.replayCache.map { e -> e.toPluginErrorInfo(PluginErrorCodes.PLUGIN_ERROR).toJSPayload() }
 
 /**
- * List entry for a plugin that failed discovery. JS registers it so the user can see it and the reason,
- * but it can never run in this session and will try to recover on a later boot.
+ * Payload for a plugin that failed discovery. JS shows the failure; it won't run this session and may recover on the next boot.
  */
 private fun DiscoveryFailure.toJSPayload(manifest: PluginManifest, source: PluginSource? = null): Map<String, Any?> =
     mapOf(

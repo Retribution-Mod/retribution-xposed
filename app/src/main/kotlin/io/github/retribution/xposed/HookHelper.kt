@@ -54,13 +54,11 @@ class MethodHookBuilder internal constructor() {
 }
 
 /**
- * Scope object passed to before/after hook blocks.
+ * Scope passed to before/after hook blocks.
  *
- * Provides:
- * - Access to the [param] object
- * - Accessors for `thisObject`, `args`, `result`, and `throwable`
+ * Exposes the [param] object plus `thisObject`, `args`, `result`, and `throwable`.
  *
- * @property param The [XC_MethodHook.MethodHookParam] for the current hook.
+ * @property param The current hook's parameters.
  */
 class HookScope internal constructor(
     val param: XC_MethodHook.MethodHookParam
