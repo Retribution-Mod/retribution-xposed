@@ -1,6 +1,7 @@
 package io.github.retribution.xposed.tweaks
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -38,21 +39,8 @@ val bundleDeepLinkTweak by tweak {
 
         when (type) {
             "bundle" -> {
-                // Validate bundle URL against allowlist before applying
-                if (!isBundleUrlAllowed(url)) {
-                    val log = logger("BundleDeepLinkTweak")
-                    log.e("Rejected bundle URL from untrusted source: $url")
-                    activity.runOnUiThread {
-                        Toast.makeText(
-                            activity,
-                            "Bundle URL rejected: Only trusted sources are allowed",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                    return@withAppActivity
-                }
-                RetributionUpdater.applyBundleUrl(url)
-                reloadApp()
+                // Security: Require user confirmation before applying custom bundle URLs
+                showBundleConfirmationDialog(activity, url)
             }
             "font", "theme", "plugin" -> stageDeepLink(activity, type, url)
         }
@@ -60,18 +48,75 @@ val bundleDeepLinkTweak by tweak {
 }
 
 /**
- * Validates that a bundle URL comes from a trusted source.
+ * Shows a confirmation dialog before applying a custom bundle URL.
+ * This prevents silent remote code execution via crafted deep links.
+ */
+private fun showBundleConfirmationDialog(activity: Activity, url: String) {
+    val log = logger("BundleDeepLinkTweak")
+    
+    // Validate URL against allowlist
+    if (!isUrlAllowed(url)) {
+        log.w("Blocked bundle deep link with untrusted URL: $url")
+        activity.runOnUiThread {
+            AlertDialog.Builder(activity)
+                .setTitle("Security Warning")
+                .setMessage(
+                    """
+                    The requested bundle URL is not from a trusted source and has been blocked for your security.
+                    
+                    Only official Retribution bundle URLs from GitHub releases are allowed.
+                    
+                    Blocked URL: $url
+                    """.trimIndent()
+                )
+                .setPositiveButton("OK") { d, _ -> d.dismiss() }
+                .show()
+        }
+        return
+    }
+    
+    activity.runOnUiThread {
+        AlertDialog.Builder(activity)
+            .setTitle("Load Custom Bundle?")
+            .setMessage(
+                """
+                A deep link is requesting to load a custom bundle from:
+                
+                $url
+                
+                This will replace the current Retribution bundle. Only proceed if you trust this source.
+                
+                The app will reload after applying this change.
+                """.trimIndent()
+            )
+            .setPositiveButton("Load Bundle") { d, _ ->
+                log.i("User confirmed custom bundle URL: $url")
+                RetributionUpdater.applyBundleUrl(url)
+                d.dismiss()
+                reloadApp()
+            }
+            .setNegativeButton("Cancel") { d, _ ->
+                log.i("User cancelled custom bundle URL: $url")
+                d.dismiss()
+            }
+            .setCancelable(true)
+            .show()
+    }
+}
+
+/**
+ * Validates that a bundle URL is from a trusted source.
  * Only allows official Retribution bundle URLs from GitHub releases.
  */
-private fun isBundleUrlAllowed(url: String): Boolean {
+private fun isUrlAllowed(url: String): Boolean {
     val allowedPrefixes = listOf(
         "https://github.com/Retribution-Mod/retribution-bundle/releases/",
         "https://github.com/Retribution-Mod/retribution-bundle-next/releases/",
         "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle/",
-        "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle-next/",
+        "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle-next/"
     )
     
-    return allowedPrefixes.any { url.startsWith(it, ignoreCase = false) }
+    return allowedPrefixes.any { url.startsWith(it, ignoreCase = true) }
 }
 
 @Serializable

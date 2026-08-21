@@ -36,8 +36,8 @@ data class LoaderConfig(
  * The actual loading of the bundle is handled by [RetributionScriptLoader].
  */
 object RetributionUpdater {
-    internal val TIMEOUT = 30.seconds
-    private val TIMEOUT_CACHED = 15.seconds
+    internal val TIMEOUT = 10.seconds
+    private val TIMEOUT_CACHED = 5.seconds
     private const val ETAG_PATH = "etag.txt"
     private const val VARIANT_PATH = "variant.txt"
     private const val CONFIG_PATH = "loader.json"
@@ -47,17 +47,6 @@ object RetributionUpdater {
         "https://github.com/Retribution-Mod/retribution-bundle/releases/latest/download"
     private const val BASE_NEXT_BUNDLE_URL =
         "https://github.com/Retribution-Mod/retribution-bundle-next/releases/latest/download"
-
-    /**
-     * Allowlist of trusted bundle URL prefixes.
-     * Only URLs starting with these prefixes are permitted for custom bundle loading.
-     */
-    private val TRUSTED_BUNDLE_URL_PREFIXES = listOf(
-        "https://github.com/Retribution-Mod/retribution-bundle/releases/",
-        "https://github.com/Retribution-Mod/retribution-bundle-next/releases/",
-        "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle/",
-        "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle-next/",
-    )
 
     private val log = logger("RetributionUpdater")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -69,6 +58,14 @@ object RetributionUpdater {
     private lateinit var variantFile: File
     private lateinit var configFile: File
     private lateinit var packageName: String
+
+    private val _downloadReady = CompletableDeferred<Unit>()
+
+    /**
+     * Completes after the *first* download attempt finishes (success or any terminal failure).
+     * [RetributionScriptLoader] joins on this before falling through to its fallback bundle.
+     */
+    val downloadReady: Deferred<Unit> = _downloadReady
 
     internal fun init(dataDir: String, pkg: String = "") {
         packageName = pkg
@@ -83,15 +80,15 @@ object RetributionUpdater {
         config = runCatching {
             if (configFile.exists()) {
                 val loadedConfig = RetributionJson.decodeFromString<LoaderConfig>(configFile.readText())
-                // Validate any existing custom URL to prevent loading previously stored malicious URLs
+                // Security: Validate custom URL on load to prevent use of persisted malicious URLs
                 if (loadedConfig.customLoadUrl.enabled) {
-                    try {
-                        validateBundleUrl(loadedConfig.customLoadUrl.url)
-                        loadedConfig
-                    } catch (e: SecurityException) {
-                        log.e("Existing custom bundle URL failed validation, resetting to default", e)
+                    val customUrl = loadedConfig.customLoadUrl.url
+                    if (!isValidBundleUrl(customUrl)) {
+                        log.w("Loaded config contains invalid custom URL, resetting: $customUrl")
                         configFile.delete()
                         LoaderConfig()
+                    } else {
+                        loadedConfig
                     }
                 } else {
                     loadedConfig
@@ -131,23 +128,14 @@ object RetributionUpdater {
         variantFile.writeText(variant)
     }
 
-    /**
-     * Validates that a custom bundle URL is from a trusted source.
-     * @throws SecurityException if the URL is not in the allowlist
-     */
-    private fun validateBundleUrl(url: String) {
-        val isTrusted = TRUSTED_BUNDLE_URL_PREFIXES.any { prefix ->
-            url.startsWith(prefix, ignoreCase = false)
-        }
-        if (!isTrusted) {
-            throw SecurityException(
-                "Bundle URL rejected: not in allowlist. Only official Retribution bundle sources are permitted. URL: $url"
-            )
-        }
-    }
-
     fun applyBundleUrl(url: String) {
-        validateBundleUrl(url)
+        // Security: Validate URL before persisting
+        if (!isValidBundleUrl(url)) {
+            log.e("Rejected invalid bundle URL: $url")
+            throw SecurityException("Bundle URL validation failed: URL must be from a trusted source")
+        }
+        
+        log.i("Applying custom bundle URL: $url")
         val newConfig = LoaderConfig(customLoadUrl = CustomLoadUrl(enabled = true, url = url))
         if (::configFile.isInitialized) {
             config = newConfig
@@ -156,14 +144,28 @@ object RetributionUpdater {
             config = newConfig
         }
     }
+    
+    /**
+     * Validates that a bundle URL is from a trusted source.
+     * This provides defense-in-depth against malicious bundle URLs.
+     */
+    private fun isValidBundleUrl(url: String): Boolean {
+        // Allow official Retribution bundle URLs from GitHub
+        val allowedPrefixes = listOf(
+            "https://github.com/Retribution-Mod/retribution-bundle/releases/",
+            "https://github.com/Retribution-Mod/retribution-bundle-next/releases/",
+            "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle/",
+            "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle-next/"
+        )
+        
+        return allowedPrefixes.any { url.startsWith(it, ignoreCase = true) }
+    }
 
     /**
      * Trigger a download. If [userInitiated] is true (retry from the error dialog), the timeout
      * is disabled and a success dialog is shown on the next available activity.
-     * For automatic downloads, the cached bundle is loaded immediately and a reload prompt is shown
-     * when the new bundle finishes downloading in the background.
      */
-    fun downloadScript(userInitiated: Boolean = false): Job = scope.launch {
+    fun downloadScript(userInitiated: Boolean = false, showDialog: Boolean = true): Job = scope.launch {
         try {
             val version = withTimeoutOrNull(2.seconds) {
                 while (!isDiscordVersionSet()) delay(50)
@@ -189,24 +191,28 @@ object RetributionUpdater {
                     result.etag?.let(etag::writeText) ?: etag.delete()
 
                     log.i("Bundle updated (${result.bytes.size} bytes)")
-                    if (userInitiated) showSuccessDialog() else showUpdateDialog()
+                    if (showDialog) {
+                        if (userInitiated) showSuccessDialog() else showUpdateDialog()
+                    }
                 }
 
                 ETagFetchResult.NotModified -> log.i("Server responded with 304, no changes")
             }
         } catch (e: Throwable) {
             log.e("Failed to download script", e)
-            if (userInitiated) showErrorDialog(e)
+            showErrorDialog(e)
+        } finally {
+            _downloadReady.complete(Unit)
         }
     }
 
     private fun showUpdateDialog() = withAppActivity { activity ->
         activity.runOnUiThread {
             AlertDialog.Builder(activity)
-                .setTitle("Retribution Update Available")
-                .setMessage("A new version of Retribution is ready. Reload to apply the update now, or reload later to keep using the current version.")
-                .setPositiveButton("Reload Now") { d, _ -> reloadApp(); d.dismiss() }
-                .setNegativeButton("Reload Later") { d, _ -> d.dismiss() }
+                .setTitle("Retribution Update Downloaded")
+                .setMessage("A reload is required for changes to take effect.")
+                .setPositiveButton("Reload") { d, _ -> reloadApp(); d.dismiss() }
+                .setNegativeButton("Later") { d, _ -> d.dismiss() }
                 .show()
         }
     }
@@ -215,9 +221,9 @@ object RetributionUpdater {
         activity.runOnUiThread {
             AlertDialog.Builder(activity)
                 .setTitle("Retribution Update Successful")
-                .setMessage("A new version of Retribution is ready. Reload to apply the update now, or reload later to keep using the current version.")
-                .setPositiveButton("Reload Now") { d, _ -> reloadApp(); d.dismiss() }
-                .setNegativeButton("Reload Later") { d, _ -> d.dismiss() }
+                .setMessage("A reload is required for changes to take effect.")
+                .setPositiveButton("Reload") { d, _ -> reloadApp(); d.dismiss() }
+                .setNegativeButton("Later") { d, _ -> d.dismiss() }
                 .show()
         }
     }
@@ -253,6 +259,6 @@ object RetributionUpdater {
 val retributionUpdaterTweak by tweak {
     withAppContext { ctx ->
         RetributionUpdater.init(ctx.dataDir.absolutePath, ctx.packageName)
-        RetributionUpdater.downloadScript(userInitiated = false)
+        RetributionUpdater.downloadScript(userInitiated = false, showDialog = false)
     }
 }
