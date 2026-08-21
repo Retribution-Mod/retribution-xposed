@@ -36,8 +36,8 @@ data class LoaderConfig(
  * The actual loading of the bundle is handled by [RetributionScriptLoader].
  */
 object RetributionUpdater {
-    internal val TIMEOUT = 10.seconds
-    private val TIMEOUT_CACHED = 5.seconds
+    internal val TIMEOUT = 30.seconds
+    private val TIMEOUT_CACHED = 15.seconds
     private const val ETAG_PATH = "etag.txt"
     private const val VARIANT_PATH = "variant.txt"
     private const val CONFIG_PATH = "loader.json"
