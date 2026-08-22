@@ -17,6 +17,7 @@ import io.github.retribution.xposed.tweaks.plugins.internal.DISCORD_VERSION
 import io.github.retribution.xposed.tweaks.plugins.internal.isDiscordVersionSet
 import io.github.retribution.xposed.tweaks.plugins.internal.showRecoveryAlert
 import kotlinx.coroutines.*
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.io.File
 import java.security.MessageDigest
@@ -56,6 +57,27 @@ data class BundleManifest(
     val sha256: String,
     val etag: String? = null,
 )
+
+/**
+ * Compares bundle version tags such as "v0.2.1", "0.2.0", or "v0.0.1.16".
+ * Returns a positive number if [a] is newer, negative if [b] is newer, 0 if equal.
+ */
+@Serializable
+private data class Release(
+    @SerialName("tag_name") val tagName: String,
+)
+
+fun compareBundleVersions(a: String, b: String): Int {
+    val pa = a.trimStart('v', 'V').split('.').map { it.filter(Char::isDigit).toIntOrNull() ?: 0 }
+    val pb = b.trimStart('v', 'V').split('.').map { it.filter(Char::isDigit).toIntOrNull() ?: 0 }
+    val max = maxOf(pa.size, pb.size)
+    for (i in 0 until max) {
+        val va = pa.getOrElse(i) { 0 }
+        val vb = pb.getOrElse(i) { 0 }
+        if (va != vb) return va - vb
+    }
+    return 0
+}
 
 /**
  * Updater for the JS bundle.
@@ -157,6 +179,18 @@ object RetributionUpdater {
         "next" -> "$BASE_NEXT_BUNDLE_URL/retribution.min.js"
         "new" -> "$BASE_BUNDLE_URL/retribution-new.min.js"
         else -> "$BASE_BUNDLE_URL/retribution-old.min.js"
+    }
+
+    private fun bundleRepoFromUrl(url: String): String? = when {
+        url.contains("/retribution-bundle-next/releases/") -> "Retribution-Mod/retribution-bundle-next"
+        url.contains("/retribution-bundle/releases/") -> "Retribution-Mod/retribution-bundle"
+        else -> null
+    }
+
+    private fun isBundleVersion(version: String?): Boolean {
+        if (version.isNullOrBlank()) return false
+        val start = version.trimStart('v', 'V')
+        return start.firstOrNull()?.isDigit() == true
     }
 
     private fun selectBundleVariant(variant: String) {
@@ -267,6 +301,20 @@ object RetributionUpdater {
             val url = customUrl ?: bundleUrl(version)
             log.i("Checking for $variant JS bundle update at: $url")
 
+            val currentVersion = runCatching {
+                if (manifestFile.isFile) RetributionJson.decodeFromString<BundleManifest>(manifestFile.readText()).version else null
+            }.getOrNull()
+
+            val latestVersion = if (customUrl == null) httpClient.getLatestReleaseTag(bundleRepoFromUrl(url)) else null
+
+            if (latestVersion != null && isBundleVersion(currentVersion) && isBundleVersion(latestVersion)) {
+                val cmp = compareBundleVersions(latestVersion, currentVersion!!)
+                if (cmp <= 0) {
+                    log.i("Bundle is up-to-date (current $currentVersion >= latest $latestVersion)")
+                    return@launch
+                }
+            }
+
             val currentEtag = if (etag.isFile) etag.readText() else null
             val result = httpClient.getWithETag(
                 url = url,
@@ -280,7 +328,7 @@ object RetributionUpdater {
                     AtomicFile(stagedBundle).writeBytes(result.bytes)
 
                     val manifest = BundleManifest(
-                        version = "?", // unknown until release metadata is fetched separately
+                        version = latestVersion ?: "?",
                         variant = variant,
                         size = result.bytes.size.toLong(),
                         sha256 = stagedBundle.sha256(),
@@ -368,6 +416,18 @@ object RetributionUpdater {
             if (!source.isFile) return@runCatching false
             if (source.length() != entry.size || source.sha256() != entry.sha256) return@runCatching false
 
+            val currentVersion = runCatching {
+                if (manifestFile.isFile) RetributionJson.decodeFromString<BundleManifest>(manifestFile.readText()).version else null
+            }.getOrNull()
+
+            if (isBundleVersion(currentVersion) && isBundleVersion(sharedManifest.version)) {
+                val cmp = compareBundleVersions(sharedManifest.version, currentVersion!!)
+                if (cmp <= 0) {
+                    log.i("Public bundle cache ($sharedManifest.version) is not newer than current ($currentVersion), skipping copy")
+                    return@runCatching true
+                }
+            }
+
             source.copyTo(bundle, overwrite = true)
 
             val manifest = BundleManifest(
@@ -400,7 +460,7 @@ object RetributionUpdater {
         val sha = bundle.sha256()
         val size = bundle.length()
         val manifest = BundleManifest(
-            version = BuildConfig.VERSION_NAME,
+            version = "fallback",
             variant = variant,
             size = size,
             sha256 = sha,

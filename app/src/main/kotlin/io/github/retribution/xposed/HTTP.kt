@@ -6,6 +6,8 @@ import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.http.*
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 
 internal val httpClient by lazy {
     HttpClient(CIO) {
@@ -15,6 +17,18 @@ internal val httpClient by lazy {
         install(HttpTimeout) {}
     }
 }
+
+@Serializable
+private data class GitHubRelease(
+    @SerialName("tag_name") val tagName: String,
+)
+
+internal suspend fun HttpClient.getLatestReleaseTag(repo: String): String? = runCatching {
+    val response = get("https://api.github.com/repos/$repo/releases/latest")
+    if (response.status == HttpStatusCode.OK) {
+        response.body<GitHubRelease>().tagName
+    } else null
+}.getOrNull()
 
 internal sealed class ETagFetchResult {
     /** A fresh body was fetched. */
