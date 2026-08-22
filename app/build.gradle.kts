@@ -120,7 +120,17 @@ tasks.register<Task>("downloadBundleAssets") {
     }
 }
 
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+// Make sure the fallback assets are always present before assets are merged or packaged,
+// whether the build is an APK (assemble), app bundle, or universal APK (CI workflow).
+val assetPackagingTasks = listOf(
+    "mergeReleaseAssets", "mergeDebugAssets",
+    "buildReleasePreBundle", "buildDebugPreBundle",
+    "packageReleaseBundle", "packageDebugBundle",
+    "packageReleaseUniversalApk", "packageDebugUniversalApk",
+    "assembleRelease", "assembleDebug",
+)
+
+tasks.matching { it.name in assetPackagingTasks }.configureEach {
     dependsOn("downloadBundleAssets")
 }
 
