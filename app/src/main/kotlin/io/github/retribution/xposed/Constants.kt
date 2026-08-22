@@ -17,10 +17,19 @@ object RetributionConstants {
         get() = "RetributionXposed/$LOADER_VERSION"
 
     /**
-     * Fallback Hermes bundle shipped inside this APK's `assets/` directory.
+     * Fallback Hermes/JS bundle shipped inside this APK's `assets/` directory, variant-aware.
      * Loaded by [io.github.retribution.xposed.tweaks.RetributionScriptLoader] when the cached `bundle.js` isn't available.
      */
-    const val FALLBACK_BUNDLE_ASSET = "assets://Retribution.bundle"
+    fun fallbackBundleAsset(variant: String) = when (variant) {
+        "new" -> "assets://retribution-new.bundle"
+        else -> "assets://retribution-old.bundle"
+    }
+
+    /** Public shared folder where the Manager pre-caches bundle variants. */
+    const val SHARED_BUNDLE_DIR = "Android/media/app.retribution.manager/Retribution"
+
+    /** Staged update file; swapped to [MAIN_SCRIPT_FILE] on the next start. */
+    const val STAGED_SCRIPT_FILE = "bundle.js.new"
 }
 
 /**
