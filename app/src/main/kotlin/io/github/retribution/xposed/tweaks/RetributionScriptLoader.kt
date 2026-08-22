@@ -8,6 +8,8 @@ import io.github.retribution.xposed.tweaks.base.InjectorScope
 import io.github.retribution.xposed.tweaks.base.registerScriptInjector
 import io.github.retribution.xposed.tweaks.plugins.internal.DISCORD_VERSION
 import io.github.retribution.xposed.tweaks.plugins.internal.isDiscordVersionSet
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -28,6 +30,15 @@ val RetributionScriptLoader by tweak {
     val mainScript = File(cacheDir, RetributionConstants.MAIN_SCRIPT_FILE)
 
     registerScriptInjector { scope: InjectorScope ->
+        // Pre-seed the bundle cache (public Manager folder or fallback asset) before loading.
+        runCatching {
+            runBlocking {
+                withTimeout(10_000) {
+                    RetributionUpdater.preSeedReady.await()
+                }
+            }
+        }.onFailure { scope.tweakLog.w("Pre-seed timed out; loading bundle if already cached") }
+
         runRetributionScripts(scope, preloadsDir, mainScript)
     }
 }
@@ -66,8 +77,10 @@ private fun runRetributionScripts(scope: InjectorScope, preloadsDir: File, mainS
             log.i("Loading downloaded bundle: ${mainScript.absolutePath}")
             scope.runFile(mainScript.absolutePath)
         } else {
-            log.i("Downloaded bundle missing; falling back to ${RetributionConstants.FALLBACK_BUNDLE_ASSET}")
-            scope.runAsset(RetributionConstants.FALLBACK_BUNDLE_ASSET)
+            val fallbackVariant = if (isDiscordVersionSet() && DISCORD_VERSION >= NEW_VERSION_THRESHOLD) "new" else "old"
+            val fallbackAsset = RetributionConstants.fallbackBundleAsset(fallbackVariant)
+            log.i("Downloaded bundle missing; falling back to $fallbackAsset")
+            scope.runAsset(fallbackAsset)
         }
     } catch (e: Throwable) {
         log.e("Unable to run Retribution scripts", e)

@@ -1,9 +1,12 @@
 package io.github.retribution.xposed.tweaks
 
 import android.app.AlertDialog
+import android.content.Context
+import android.os.Environment
 import android.util.AtomicFile
 import android.widget.Toast
 import androidx.core.util.writeBytes
+import android.content.res.XModuleResources
 import io.github.retribution.logger
 import io.github.retribution.reloadApp
 import io.github.retribution.xposed.RetributionJson
@@ -16,6 +19,7 @@ import io.github.retribution.xposed.tweaks.plugins.internal.showRecoveryAlert
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
 import java.io.File
+import java.security.MessageDigest
 import kotlin.time.Duration.Companion.seconds
 
 @Serializable
@@ -29,15 +33,39 @@ data class LoaderConfig(
     val customLoadUrl: CustomLoadUrl = CustomLoadUrl(),
 )
 
+@Serializable
+data class BundleEntry(
+    val filename: String,
+    val size: Long,
+    val sha256: String,
+    val etag: String? = null,
+)
+
+@Serializable
+data class SharedManifest(
+    val version: String,
+    val new: BundleEntry,
+    val old: BundleEntry,
+)
+
+@Serializable
+data class BundleManifest(
+    val version: String,
+    val variant: String,
+    val size: Long,
+    val sha256: String,
+    val etag: String? = null,
+)
+
 /**
  * Updater for the JS bundle.
  *
- * Handles configuration, downloading, caching, and user-facing retry/recovery dialogs.
- * The actual loading of the bundle is handled by [RetributionScriptLoader].
+ * Handles configuration, pre-seeding from a public shared cache or fallback assets, staged background
+ * updates, and user-facing retry/recovery dialogs. The actual loading of the bundle is handled by
+ * [RetributionScriptLoader].
  */
 object RetributionUpdater {
-    internal val TIMEOUT = 10.seconds
-    private val TIMEOUT_CACHED = 5.seconds
+    private val DOWNLOAD_TIMEOUT = 30.seconds
     private const val ETAG_PATH = "etag.txt"
     private const val VARIANT_PATH = "variant.txt"
     private const val CONFIG_PATH = "loader.json"
@@ -49,30 +77,40 @@ object RetributionUpdater {
         "https://github.com/Retribution-Mod/retribution-bundle-next/releases/latest/download"
 
     private val log = logger("RetributionUpdater")
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile
     private var config = LoaderConfig()
     private lateinit var bundle: File
+    private lateinit var stagedBundle: File
+    private lateinit var manifestFile: File
+    private lateinit var stagedManifest: File
     private lateinit var etag: File
     private lateinit var variantFile: File
     private lateinit var configFile: File
     private lateinit var packageName: String
+    private var appContext: Context? = null
+    private var modulePath: String? = null
 
-    private val _downloadReady = CompletableDeferred<Unit>()
+    private val _preSeedReady = CompletableDeferred<Unit>()
 
     /**
-     * Completes after the *first* download attempt finishes (success or any terminal failure).
-     * [RetributionScriptLoader] joins on this before falling through to its fallback bundle.
+     * Completes once the bundle cache has been pre-seeded (from public Manager cache, fallback asset,
+     * or failed gracefully). [RetributionScriptLoader] joins on this before loading the bundle.
      */
-    val downloadReady: Deferred<Unit> = _downloadReady
+    val preSeedReady: Deferred<Unit> = _preSeedReady
 
-    internal fun init(dataDir: String, pkg: String = "") {
+    internal fun init(dataDir: String, pkg: String = "", modPath: String = "", context: Context? = null) {
         packageName = pkg
+        modulePath = modPath
+        appContext = context
         val cacheDir = File(dataDir, RetributionConstants.CACHE_DIR).apply { mkdirs() }
         val filesDir = File(dataDir, RetributionConstants.FILES_DIR).apply { mkdirs() }
 
         bundle = File(cacheDir, RetributionConstants.MAIN_SCRIPT_FILE)
+        stagedBundle = File(cacheDir, RetributionConstants.STAGED_SCRIPT_FILE)
+        manifestFile = File(cacheDir, "bundle.manifest")
+        stagedManifest = File(cacheDir, "bundle.js.new.manifest")
         etag = File(cacheDir, ETAG_PATH)
         variantFile = File(cacheDir, VARIANT_PATH)
         configFile = File(filesDir, CONFIG_PATH)
@@ -134,7 +172,7 @@ object RetributionUpdater {
             log.e("Rejected invalid bundle URL: $url")
             throw SecurityException("Bundle URL validation failed: URL must be from a trusted source")
         }
-        
+
         log.i("Applying custom bundle URL: $url")
         val newConfig = LoaderConfig(customLoadUrl = CustomLoadUrl(enabled = true, url = url))
         if (::configFile.isInitialized) {
@@ -144,12 +182,15 @@ object RetributionUpdater {
             config = newConfig
         }
     }
-    
+
     /**
      * Validates that a bundle URL is from a trusted source.
      * This provides defense-in-depth against malicious bundle URLs.
      */
     private fun isValidBundleUrl(url: String): Boolean {
+        // Debug builds are allowed to load bundles from localhost for development testing.
+        if (BuildConfig.DEBUG && (url.startsWith("http://localhost") || url.startsWith("https://localhost"))) return true
+
         // Allow official Retribution bundle URLs from GitHub
         val allowedPrefixes = listOf(
             "https://github.com/Retribution-Mod/retribution-bundle/releases/",
@@ -157,15 +198,51 @@ object RetributionUpdater {
             "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle/",
             "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle-next/"
         )
-        
+
         return allowedPrefixes.any { url.startsWith(it, ignoreCase = true) }
     }
 
     /**
-     * Trigger a download. If [userInitiated] is true (retry from the error dialog), the timeout
-     * is disabled and a success dialog is shown on the next available activity.
+     * Pre-seed the bundle cache before React loads. Copies from the Manager's public shared cache if
+     * available and valid, otherwise falls back to the bundle asset shipped in the Xposed module.
+     * Also applies any staged update from a previous run.
      */
-    fun downloadScript(userInitiated: Boolean = false, showDialog: Boolean = true): Job = scope.launch {
+    suspend fun preSeedCache() {
+        try {
+            val version = withTimeoutOrNull(5.seconds) {
+                while (!isDiscordVersionSet()) delay(50)
+                DISCORD_VERSION
+            }
+            val variant = bundleVariant(version)
+
+            // First, apply a staged update from a previous run if it matches the current variant.
+            if (applyStagedUpdate(variant)) {
+                log.i("Applied staged bundle update ($variant)")
+            } else {
+                // Then prefer a public shared cache from the Manager.
+                if (copyFromPublicCache(variant)) {
+                    log.i("Pre-seeded bundle from Manager shared cache ($variant)")
+                } else {
+                    // Fall back to the asset bundled inside the module.
+                    copyFallbackAsset(variant)
+                    log.i("Pre-seeded bundle from fallback asset ($variant)")
+                }
+            }
+        } catch (e: Throwable) {
+            log.e("Failed to pre-seed bundle; trying fallback asset", e)
+            runCatching {
+                copyFallbackAsset(bundleVariant(null))
+            }.onFailure { log.e("Fallback asset copy also failed", it) }
+        } finally {
+            _preSeedReady.complete(Unit)
+        }
+    }
+
+    /**
+     * Check for a bundle update and, if one is found, stage it to a separate file. It is applied on
+     * the next app restart. This does not show any dialogs by default.
+     */
+    fun downloadUpdate(showDialog: Boolean = false, userInitiated: Boolean = false): Job = scope.launch {
         try {
             val version = withTimeoutOrNull(2.seconds) {
                 while (!isDiscordVersionSet()) delay(50)
@@ -173,38 +250,167 @@ object RetributionUpdater {
             }
             val customUrl = config.customLoadUrl.takeIf { it.enabled }?.url
             val variant = customUrl?.let { "custom:$it" } ?: bundleVariant(version)
-            selectBundleVariant(variant)
             val url = customUrl ?: bundleUrl(version)
-            log.i("Fetching $variant JS bundle from: $url")
+            log.i("Checking for $variant JS bundle update at: $url")
 
+            val currentEtag = if (etag.isFile) etag.readText() else null
             val result = httpClient.getWithETag(
                 url = url,
-                etag = if (etag.exists() && bundle.exists()) etag.readText() else null,
-                timeoutMillis = if (userInitiated) null
-                else if (bundle.exists()) TIMEOUT_CACHED.inWholeMilliseconds else TIMEOUT.inWholeMilliseconds,
+                etag = currentEtag,
+                timeoutMillis = if (userInitiated) null else DOWNLOAD_TIMEOUT.inWholeMilliseconds,
             )
 
             when (result) {
                 is ETagFetchResult.Fetched -> {
-                    AtomicFile(bundle).writeBytes(result.bytes)
+                    stagedBundle.parentFile?.mkdirs()
+                    AtomicFile(stagedBundle).writeBytes(result.bytes)
 
-                    result.etag?.let(etag::writeText) ?: etag.delete()
+                    val manifest = BundleManifest(
+                        version = "?", // unknown until release metadata is fetched separately
+                        variant = variant,
+                        size = result.bytes.size.toLong(),
+                        sha256 = stagedBundle.sha256(),
+                        etag = result.etag,
+                    )
+                    stagedManifest.writeText(RetributionJson.encodeToString(manifest))
 
-                    log.i("Bundle updated (${result.bytes.size} bytes)")
-                    if (showDialog) {
-                        if (userInitiated) showSuccessDialog() else showUpdateDialog()
-                    }
+                    log.i("Bundle update staged (${result.bytes.size} bytes); will apply on next restart")
+                    if (showDialog && userInitiated) showSuccessDialog()
                 }
 
-                ETagFetchResult.NotModified -> log.i("Server responded with 304, no changes")
+                ETagFetchResult.NotModified -> log.i("Server responded with 304, no bundle update")
             }
         } catch (e: Throwable) {
-            log.e("Failed to download script", e)
-            showErrorDialog(e)
-        } finally {
-            _downloadReady.complete(Unit)
+            log.e("Failed to check for bundle update", e)
+            if (showDialog && userInitiated) showErrorDialog(e)
         }
     }
+
+    /**
+     * Legacy entry point for user-initiated downloads (settings, retry, etc.).
+     * This now uses [downloadUpdate] to stage the new bundle.
+     */
+    fun downloadScript(userInitiated: Boolean = false, showDialog: Boolean = true): Job =
+        downloadUpdate(showDialog = showDialog, userInitiated = userInitiated)
+
+    /**
+     * Apply a staged update (bundle.js.new) to the live bundle file if it matches the requested [variant].
+     * Returns true if a staged update was applied.
+     */
+    private fun applyStagedUpdate(variant: String): Boolean {
+        if (!stagedBundle.isFile || !stagedManifest.isFile) return false
+
+        return runCatching {
+            val manifest = RetributionJson.decodeFromString<BundleManifest>(stagedManifest.readText())
+
+            // Ignore staged bundles whose variant no longer matches the selected Discord version.
+            if (manifest.variant != variant) {
+                log.w("Discarding staged bundle: variant ${manifest.variant} != $variant")
+                stagedBundle.delete()
+                stagedManifest.delete()
+                return@runCatching false
+            }
+
+            if (stagedBundle.length() != manifest.size || stagedBundle.sha256() != manifest.sha256) {
+                throw IllegalStateException("Staged bundle hash/size mismatch")
+            }
+
+            if (!stagedBundle.renameTo(bundle)) {
+                stagedBundle.copyTo(bundle, overwrite = true)
+                stagedBundle.delete()
+            }
+            if (!stagedManifest.renameTo(manifestFile)) {
+                stagedManifest.copyTo(manifestFile, overwrite = true)
+                stagedManifest.delete()
+            }
+
+            manifest.etag?.let { etag.writeText(it) } ?: etag.delete()
+            if (::variantFile.isInitialized) variantFile.writeText(manifest.variant)
+
+            log.i("Applied staged bundle update: ${bundle.absolutePath}")
+            true
+        }.getOrElse {
+            log.w("Failed to apply staged bundle", it)
+            stagedBundle.delete()
+            stagedManifest.delete()
+            false
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun copyFromPublicCache(variant: String): Boolean {
+        return runCatching {
+            val sharedDir = File(Environment.getExternalStorageDirectory(), RetributionConstants.SHARED_BUNDLE_DIR)
+            val sharedManifestFile = File(sharedDir, "manifest.json")
+            if (!sharedManifestFile.isFile) return@runCatching false
+
+            val sharedManifest = RetributionJson.decodeFromString<SharedManifest>(sharedManifestFile.readText())
+            val entry = when (variant) {
+                "new", "next" -> sharedManifest.new
+                else -> sharedManifest.old
+            }
+
+            val source = File(sharedDir, entry.filename)
+            if (!source.isFile) return@runCatching false
+            if (source.length() != entry.size || source.sha256() != entry.sha256) return@runCatching false
+
+            source.copyTo(bundle, overwrite = true)
+
+            val manifest = BundleManifest(
+                version = sharedManifest.version,
+                variant = variant,
+                size = entry.size,
+                sha256 = entry.sha256,
+                etag = entry.etag,
+            )
+            manifestFile.writeText(RetributionJson.encodeToString(manifest))
+
+            entry.etag?.let { etag.writeText(it) } ?: etag.delete()
+            if (::variantFile.isInitialized) variantFile.writeText(variant)
+
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun copyFallbackAsset(variant: String) {
+        val path = modulePath ?: throw IllegalStateException("Module path not initialized")
+        val assetName = if (variant == "new") "retribution-new.bundle" else "retribution-old.bundle"
+
+        val am = XModuleResources.createInstance(path, null).assets
+        am.open(assetName).use { input ->
+            bundle.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+
+        val sha = bundle.sha256()
+        val size = bundle.length()
+        val manifest = BundleManifest(
+            version = BuildConfig.VERSION_NAME,
+            variant = variant,
+            size = size,
+            sha256 = sha,
+            etag = null,
+        )
+        manifestFile.writeText(RetributionJson.encodeToString(manifest))
+
+        etag.delete()
+        if (::variantFile.isInitialized) variantFile.writeText(variant)
+    }
+
+    private fun File.sha256(): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        inputStream().use { input ->
+            val buffer = ByteArray(8192)
+            var read: Int
+            while (input.read(buffer).also { read = it } > 0) {
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().toHex()
+    }
+
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
     private fun showUpdateDialog() = withAppActivity { activity ->
         activity.runOnUiThread {
@@ -242,7 +448,7 @@ object RetributionUpdater {
                 )
                 .setNegativeButton("Dismiss") { d, _ -> d.dismiss() }
                 .setPositiveButton("Retry Update") { d, _ ->
-                    downloadScript(userInitiated = true)
+                    downloadUpdate(userInitiated = true)
                     Toast.makeText(activity, "Retrying download in background...", Toast.LENGTH_SHORT).show()
                     d.dismiss()
                 }
@@ -253,12 +459,21 @@ object RetributionUpdater {
 }
 
 /**
- * Wires [RetributionUpdater] into the lifecycle. Loads the loader config once the target [android.content.Context]
- * is available, then kicks off the first download.
+ * Wires [RetributionUpdater] into the lifecycle. Pre-seeds the cache once the target [android.content.Context]
+ * is available, then schedules a background update check.
  */
 val retributionUpdaterTweak by tweak {
     withAppContext { ctx ->
-        RetributionUpdater.init(ctx.dataDir.absolutePath, ctx.packageName)
-        RetributionUpdater.downloadScript(userInitiated = false, showDialog = false)
+        RetributionUpdater.init(
+            dataDir = ctx.dataDir.absolutePath,
+            pkg = ctx.packageName,
+            modPath = modulePath,
+            context = ctx,
+        )
+        RetributionUpdater.scope.launch {
+            RetributionUpdater.preSeedCache()
+            delay(2_000)
+            RetributionUpdater.downloadUpdate(showDialog = false, userInitiated = false)
+        }
     }
 }

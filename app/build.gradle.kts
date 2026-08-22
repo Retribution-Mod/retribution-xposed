@@ -1,3 +1,7 @@
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URI
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.serialization)
@@ -18,6 +22,7 @@ android {
     sourceSets {
         named("main") {
             kotlin.directories += "src/main/kotlin"
+            assets.srcDirs(layout.buildDirectory.dir("generated/retribution/assets"))
         }
     }
 
@@ -69,5 +74,60 @@ configurations.configureEach {
     if (name == "compileClasspath" || name == "runtimeClasspath"
             || name.endsWith("CompileClasspath") || name.endsWith("RuntimeClasspath")) {
         resolutionStrategy.activateDependencyLocking()
+    }
+}
+
+// Download the latest Retribution bundle variants so the module always has a fallback asset.
+tasks.register<Task>("downloadBundleAssets") {
+    val baseUrl = providers.gradleProperty("bundleBaseUrl")
+        .orElse("https://github.com/Retribution-Mod/retribution-bundle/releases/latest/download")
+
+    inputs.property("bundleBaseUrl", baseUrl)
+
+    val outDir = layout.buildDirectory.dir("generated/retribution/assets")
+    outputs.dir(outDir)
+
+    doLast {
+        val outputDir = outDir.get().asFile.apply { mkdirs() }
+        val pairs = listOf(
+            "retribution-new.min.js" to "retribution-new.bundle",
+            "retribution-old.min.js" to "retribution-old.bundle",
+        )
+
+        for ((remoteName, assetName) in pairs) {
+            val dest = File(outputDir, assetName)
+            if (dest.exists() && dest.length() > 0 && !project.hasProperty("forceDownloadBundle")) {
+                continue
+            }
+
+            val url = "${baseUrl.get()}/$remoteName"
+            val connection = URI.create(url).toURL().openConnection() as HttpURLConnection
+            connection.instanceFollowRedirects = true
+            connection.setRequestProperty("User-Agent", "RetributionXposed-Build")
+
+            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                connection.inputStream.use { input ->
+                    dest.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            } else {
+                if (!dest.exists()) {
+                    throw IOException("Failed to download $url: ${connection.responseCode}")
+                }
+            }
+        }
+    }
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn("downloadBundleAssets")
+}
+
+afterEvaluate {
+    tasks.configureEach {
+        if (name.contains("lint", ignoreCase = true) || name.contains("Lint")) {
+            dependsOn("downloadBundleAssets")
+        }
     }
 }
