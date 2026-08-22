@@ -303,15 +303,18 @@ object RetributionUpdater {
 
             val currentVersion = runCatching {
                 if (manifestFile.isFile) RetributionJson.decodeFromString<BundleManifest>(manifestFile.readText()).version else null
-            }.getOrNull()
+            }.getOrNull() ?: ""
 
-            val latestVersion = if (customUrl == null) httpClient.getLatestReleaseTag(bundleRepoFromUrl(url)) else null
+            val repo = if (customUrl == null) bundleRepoFromUrl(url) else null
+            val latestVersion = if (customUrl == null && repo != null) httpClient.getLatestReleaseTag(repo) else null
 
-            if (latestVersion != null && isBundleVersion(currentVersion) && isBundleVersion(latestVersion)) {
-                val cmp = compareBundleVersions(latestVersion, currentVersion!!)
-                if (cmp <= 0) {
-                    log.i("Bundle is up-to-date (current $currentVersion >= latest $latestVersion)")
-                    return@launch
+            latestVersion?.let { latest ->
+                if (isBundleVersion(currentVersion) && isBundleVersion(latest)) {
+                    val cmp = compareBundleVersions(latest, currentVersion)
+                    if (cmp <= 0) {
+                        log.i("Bundle is up-to-date (current $currentVersion >= latest $latest)")
+                        return@launch
+                    }
                 }
             }
 
@@ -418,10 +421,10 @@ object RetributionUpdater {
 
             val currentVersion = runCatching {
                 if (manifestFile.isFile) RetributionJson.decodeFromString<BundleManifest>(manifestFile.readText()).version else null
-            }.getOrNull()
+            }.getOrNull() ?: ""
 
             if (isBundleVersion(currentVersion) && isBundleVersion(sharedManifest.version)) {
-                val cmp = compareBundleVersions(sharedManifest.version, currentVersion!!)
+                val cmp = compareBundleVersions(sharedManifest.version, currentVersion)
                 if (cmp <= 0) {
                     log.i("Public bundle cache ($sharedManifest.version) is not newer than current ($currentVersion), skipping copy")
                     return@runCatching true
