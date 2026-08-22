@@ -188,6 +188,9 @@ object RetributionUpdater {
      * This provides defense-in-depth against malicious bundle URLs.
      */
     private fun isValidBundleUrl(url: String): Boolean {
+        // Debug builds are allowed to load bundles from localhost for development testing.
+        if (BuildConfig.DEBUG && (url.startsWith("http://localhost") || url.startsWith("https://localhost"))) return true
+
         // Allow official Retribution bundle URLs from GitHub
         val allowedPrefixes = listOf(
             "https://github.com/Retribution-Mod/retribution-bundle/releases/",

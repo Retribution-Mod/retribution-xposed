@@ -15,8 +15,8 @@ android {
         applicationId = "io.github.retribution.xposed"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 1606
-        versionName = "1.6.6"
+        versionCode = 1607
+        versionName = "1.6.7"
     }
 
     sourceSets {
@@ -122,4 +122,12 @@ tasks.register<Task>("downloadBundleAssets") {
 
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
     dependsOn("downloadBundleAssets")
+}
+
+afterEvaluate {
+    tasks.configureEach {
+        if (name.contains("lint", ignoreCase = true) || name.contains("Lint")) {
+            dependsOn("downloadBundleAssets")
+        }
+    }
 }
