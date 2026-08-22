@@ -185,21 +185,35 @@ object RetributionUpdater {
 
     /**
      * Validates that a bundle URL is from a trusted source.
-     * This provides defense-in-depth against malicious bundle URLs.
+     *
+     * In addition to the official Retribution bundle URLs, this private build also allows
+     * bundle releases from the owner's private GitHub repositories.
      */
     private fun isValidBundleUrl(url: String): Boolean {
         // Debug builds are allowed to load bundles from localhost for development testing.
         if (BuildConfig.DEBUG && (url.startsWith("http://localhost") || url.startsWith("https://localhost"))) return true
 
-        // Allow official Retribution bundle URLs from GitHub
-        val allowedPrefixes = listOf(
-            "https://github.com/Retribution-Mod/retribution-bundle/releases/",
-            "https://github.com/Retribution-Mod/retribution-bundle-next/releases/",
-            "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle/",
-            "https://raw.githubusercontent.com/Retribution-Mod/retribution-bundle-next/"
-        )
+        return runCatching {
+            val parsed = java.net.URL(url)
+            if (parsed.protocol != "https") return@runCatching false
 
-        return allowedPrefixes.any { url.startsWith(it, ignoreCase = true) }
+            val host = parsed.host.lowercase()
+            val path = parsed.path.lowercase()
+
+            when (host) {
+                "github.com" -> {
+                    path.startsWith("/retribution-mod/retribution-bundle/releases/") ||
+                    path.startsWith("/retribution-mod/retribution-bundle-next/releases/") ||
+                    path.startsWith("/everestmcarthur/retribution-bundle-private/releases/")
+                }
+                "raw.githubusercontent.com" -> {
+                    path.startsWith("/retribution-mod/retribution-bundle/") ||
+                    path.startsWith("/retribution-mod/retribution-bundle-next/") ||
+                    path.startsWith("/everestmcarthur/retribution-bundle-private/")
+                }
+                else -> false
+            }
+        }.getOrDefault(false)
     }
 
     /**
